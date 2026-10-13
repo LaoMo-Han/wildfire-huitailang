@@ -2,6 +2,7 @@
 """The formal StageSelectPart/StageInfoPart hero screen, using original pages."""
 import traceback
 import BigWorld
+import Math
 import keys
 import Inventory
 import Item
@@ -16,16 +17,53 @@ from logic import FsmGame, FashionMgr, ClientEquipsContainer
 
 
 class LocalActorField(ActorField.ActorField):
-    def enter(self, *args, **kwargs):
-        self._reuse_scene = True
-        try:
-            return ActorField.ActorField.enter(self, *args, **kwargs)
-        finally:
-            self._reuse_scene = False
+    def enter(self, hero_type, show_eff=False, enter_load_fashions=False, show_default_eff=False):
+        if self.isin:
+            self.set_hero(hero_type)
+            return
+        # Retain the original scene/actors and the user's render configuration.
+        # The online entry temporarily rebuilds HQ/shadow/cloth settings on
+        # every visit, then rebuilds them again when the page closes.
+        self.show_default_eff = show_default_eff
+        self.enter_load_fashions = enter_load_fashions
+        self.isin = True
+        self._release_bh()
+        self._init_check()
+        getattr(camera, self.camera_name)()
+        BigWorld.camera().spaceID = self.space_id
+        camera.eqc2.bw_cam.spaceID = self.space_id
+        if self.camera_name == 'eqc':
+            matrix = Math.Matrix()
+            matrix.setTranslate(self.pos_default)
+            BigWorld.camera().target = matrix
+        self.set_hero(hero_type)
+        self.show_eff = show_eff
+        BigWorld.setViewDirModelBlend(0)
+        camera.eqc.set_enabled(True)
+        if ActorField.SpaceManager.is_loading_optimizing_enable():
+            BigWorld.setSpaceInUse(self.space_id, True)
+
+    def _leave_clear(self):
+        self.isin = False
+        self._change_lock = False
+        self.show_model_handler = None
+        if self._default_change_timer:
+            BigWorld.cancelCallback(self._default_change_timer)
+            self._default_change_timer = None
+        self._clear_eff_default()
+        self._clear_eff_random()
+        BigWorld.setViewDirModelBlend(1)
+        for actor_id in self.actors:
+            ActorField.CueEffMgr.stop_sounds_by_ent_id(actor_id)
+            actor = BigWorld.entity(actor_id)
+            if actor is not None and getattr(actor, 'model', None) is not None:
+                actor.model.visible = False
+        if self._change_bh_pos:
+            BigWorld.cancelCallback(self._change_bh_pos)
+            self._change_bh_pos = None
+        self.on_stop_effect()
 
     def clear(self):
-        if getattr(self, '_reuse_scene', False) and self.space_id is not None:
-            return
         return ActorField.ActorField.clear(self)
 
 
@@ -50,6 +88,7 @@ class LocalSelectPart(SelectPart.SelectPart):
         self._SelectPart__mode = -1
         self.select_mode = select_mode
         self._update()
+        self.part_basic.hero_list.visible = select_mode == 0
 
 
 class LocalInfoPart(BasicPhase.InfoPart):
@@ -255,6 +294,8 @@ class HeroStage(object):
         self.camera_mouse_handler = self.handle_camera_mouse
         camera.bc.handle_mouse_event = self.camera_mouse_handler
         self.hall_camera_distance = camera.bc.bw_cam.pivotMaxDist
+        self.hall_pitch = 0.0
+        self.hall_yaw = 0.0
         self.control_restore_pending = False
         self.field = LocalActorField('HeroEquips')
         self.city = CityManager.instance
@@ -417,8 +458,10 @@ class HeroStage(object):
                 self.set_tab(name)
             return
         try:
+            self.capture_hall_camera()
             self.runtime.hide_map()
             self.runtime.close_bag()
+            self.hall.close_chat()
             self.initialize_player()
             self.field.enter(self.hero_type, show_eff=False, enter_load_fashions=False, show_default_eff=False)
             self.visible = True
@@ -469,15 +512,28 @@ class HeroStage(object):
         # The built-in offline state uses PlayerHero and needs the same resume.
         self.control_restore_pending = True
         self.resume_hall_behavior()
-        FsmGame.init().mode = FsmGame.MOD_HERO
-        FsmGame.set_hero_only_move(self.cursor_shown)
+        FsmGame.init().mode = FsmGame.MOD_NOML if self.hall.chat_open else FsmGame.MOD_HERO
+        ui_cursor = self.cursor_shown or bool(self.runtime.bag is not None and self.runtime.bag.visible) or self.hall.chat_open
+        FsmGame.set_hero_only_move(ui_cursor)
         camera.tryReleaseDC(FsmGame.init())
-        camera.bc()
+        if camera.inst.current is not camera.bc:
+            camera.bc()
         camera.bc.setTarget()
         camera.bc.bw_cam.pivotMaxDist = self.hall_camera_distance
+        # Normalised pitch remaps the old narrow range when limits change,
+        # which can push the camera upwards on every return/focus change.
+        BigWorld.dcursor().keepNormalizedPitch = False
         BigWorld.dcursor().minPitch = -1.569
         BigWorld.dcursor().maxPitch = 1.569
+        BigWorld.dcursor().pitch = self.hall_pitch
+        BigWorld.dcursor().yaw = self.hall_yaw
+        BigWorld.enablePlayerFade(False)
         FsmGame.init().reset_mouse_state()
+
+    def capture_hall_camera(self):
+        if camera.inst.current is camera.bc and not self.cursor_shown and not self.hall.chat_open:
+            self.hall_pitch = BigWorld.dcursor().pitch
+            self.hall_yaw = BigWorld.dcursor().yaw
 
     def handle_camera_mouse(self, dx, dy, dz):
         if FsmGame.state_is_offline() and not self.visible and not self.cursor_shown and dz:
@@ -491,8 +547,12 @@ class HeroStage(object):
     def confirm_exit(self):
         if SysBox.instance().show_array:
             return
+        self.capture_hall_camera()
         SysBox.double_btn(text=u'\u786e\u5b9a\u9000\u51fa\u6e38\u620f\u5417\uff1f'.encode('gbk'),
-                          yes_callback=BigWorld.quit, cancel_key='offline_exit')
+                          yes_callback=BigWorld.quit, no_callback=self.exit_cancelled, cancel_key='ESC')
+
+    def exit_cancelled(self):
+        BigWorld.callback(0.0, self.restore_hall_control)
 
     def resume_hall_behavior(self):
         player = BigWorld.player()
@@ -527,17 +587,35 @@ class HeroStage(object):
         if not down:
             self.menu_keys_down.discard(key)
         if SysBox.instance().show_array:
+            if key == keys.KEY_ESCAPE:
+                if down:
+                    SysBox.instance().hide('ESC')
+                    self.exit_cancelled()
+                return True
+            return False
+        if self.hall.chat_open:
+            if key in (keys.KEY_RETURN, keys.KEY_ESCAPE):
+                if down:
+                    self.hall.close_chat()
+                return True
             return False
         if FsmGame.state_is_offline() and not self.visible and key in (
                 keys.KEY_LCONTROL, getattr(keys, 'KEY_RCONTROL', keys.KEY_LCONTROL)):
             if down and key not in self.menu_keys_down:
                 self.menu_keys_down.add(key)
+                if not self.cursor_shown:
+                    self.capture_hall_camera()
                 self.cursor_shown = not self.cursor_shown
                 ShortcutManager.instance().ob_show_cursor(self.cursor_shown)
             elif not down:
                 self.menu_keys_down.discard(key)
             return True
         if FsmGame.state_is_offline() and not mods:
+            if key == keys.KEY_RETURN and not self.visible:
+                if down and key not in self.menu_keys_down:
+                    self.menu_keys_down.add(key)
+                    self.hall.open_chat()
+                return True
             menu_tabs = {keys.KEY_Z:'equip', keys.KEY_X:'fashion', keys.KEY_C:'voice', keys.KEY_V:'story'}
             if key in menu_tabs:
                 if down and key not in self.menu_keys_down:
@@ -569,6 +647,8 @@ class HeroStage(object):
         return False
 
     def handle_app_active(self, active):
+        if not active:
+            self.capture_hall_camera()
         self.previous_active_handler(active)
         if not active:
             self.menu_keys_down.clear()
@@ -628,6 +708,8 @@ class HeroStage(object):
                 if actor is not None and actor.hero_type == self.hero_type:
                     model = getattr(actor, 'model', None)
                     if model is not None:
+                        if hasattr(model, 'bh'):
+                            model.bh.active(True)
                         marker = (actor.id, actor.hero_type, id(model))
                         if marker != self.preview_linked:
                             if getattr(model, 'empty_bh', True):
@@ -670,6 +752,10 @@ class HeroStage(object):
         result['hall_camera_distance'] = self.hall_camera_distance
         result['pitch_limits'] = [BigWorld.dcursor().minPitch, BigWorld.dcursor().maxPitch]
         result['cursor_toggle'] = self.cursor_shown
+        result['camera_pitch'] = BigWorld.dcursor().pitch
+        result['camera_yaw'] = BigWorld.dcursor().yaw
+        result['appearance_updates'] = self.runtime.appearance_updates
+        result['chat_open'] = self.hall.chat_open
         result['visible_hero_count'] = len(self.selector.part_basic.hero_list.use_heros)
         result['content_counts'] = {}
         if 'fashion' in self.parts:
@@ -690,10 +776,54 @@ class HeroStage(object):
         return result
 
     def exercise(self, action):
+        if action == 'hall_repair':
+            if self.visible:
+                self.hide()
+            self.runtime.close_bag()
+            self.hall.close_chat()
+            self.cursor_shown = False
+            self.restore_hall_control()
+            BigWorld.dcursor().pitch = 0.6
+            BigWorld.dcursor().yaw = 0.8
+            self.capture_hall_camera()
+            self.show('equip')
+            self.hide()
+            result = {'pitch_after_menu':BigWorld.dcursor().pitch,
+                      'yaw_after_menu':BigWorld.dcursor().yaw}
+            self.handle_app_active(False)
+            self.handle_app_active(True)
+            result['pitch_after_focus'] = BigWorld.dcursor().pitch
+            result['yaw_after_focus'] = BigWorld.dcursor().yaw
+            self.confirm_exit()
+            result['exit_opened'] = bool(SysBox.instance().show_array)
+            self.handle_menu_key(True, keys.KEY_ESCAPE, 0, 0)
+            self.handle_menu_key(False, keys.KEY_ESCAPE, 0, 0)
+            result['exit_cancelled'] = not bool(SysBox.instance().show_array)
+            self.hall.open_chat()
+            result['chat_active'] = bool(self.hall.chat_panel.chat_edit.active)
+            self.handle_menu_key(True, keys.KEY_Z, 0, 0)
+            self.handle_menu_key(False, keys.KEY_Z, 0, 0)
+            result['typing_z_stays_in_chat'] = self.hall.chat_open and not self.visible
+            self.handle_menu_key(True, keys.KEY_RETURN, 0, 0)
+            self.handle_menu_key(False, keys.KEY_RETURN, 0, 0)
+            result['chat_closed'] = not self.hall.chat_open
+            self.runtime.toggle_bag()
+            page = self.runtime.bag.pages[self.runtime.bag.current_pid]
+            tips = page.grids[0].get_tips_dict()
+            result['item_tips_nonempty'] = bool(tips)
+            result['item_tips_keys'] = sorted(tips.keys())
+            self.runtime.close_bag()
+            before = self.runtime.appearance_updates
+            self.runtime.appearance_applied = None
+            self.runtime.apply_saved_appearance()
+            result['unchanged_appearance_updates'] = self.runtime.appearance_updates-before
+            self.hall_pitch = self.hall_yaw = 0.0
+            self.restore_hall_control()
+            return result
         if action == 'exit_dialog':
             self.confirm_exit()
             result = {'confirmation_visible':bool(SysBox.instance().show_array)}
-            SysBox.clear('offline_exit')
+            SysBox.clear('ESC')
             self.restore_hall_control()
             return result
         if action == 'catalog':

@@ -4,7 +4,7 @@ import BigWorld
 import Item
 import const
 from common_data import item_data
-from guis import factory, xnui, InvPanel
+from guis import factory, xnui, InvPanel, tipsMgr
 from logic import FsmGame
 
 
@@ -12,6 +12,7 @@ class CataloguePage(InvPanel.InvPage):
     def __init__(self, bag, parent, pid, item_ids):
         self.item_ids = item_ids
         self.local_items = {}
+        self.local_tips = {}
         InvPanel.InvPage.__init__(self, bag, parent, 0, 0)
         self.pid = pid
         self.pos_count = len(item_ids)
@@ -45,12 +46,23 @@ class CataloguePage(InvPanel.InvPage):
                     self.local_items[item_id] = Item.Item(item_id)
                 item = self.local_items[item_id]
                 grid.get_grid_obj = lambda item=item: item
+                grid.get_tips_dict = lambda item=item: self.item_tips(item)
+                grid.source = const.CONTAINER_INV
                 grid.mapping_pos = (self.pid, pos)
+                grid.enable_click_hint = False
+                grid.enable_price_hint = False
                 grid.visible = True
                 grid.update_display()
+                grid.set_sensor_avtive(True)
             else:
                 grid.get_grid_obj = lambda: None
                 grid.visible = False
+
+    def item_tips(self, item):
+        key = (item.id, tipsMgr.is_tips_ex)
+        if key not in self.local_tips:
+            self.local_tips[key] = tipsMgr.ItemTipDict.get_item_tip_dict(item.id, item, None)
+        return self.local_tips[key]
 
 
 class LocalBag(factory.CityBagDlg):
@@ -101,6 +113,8 @@ class LocalBag(factory.CityBagDlg):
     def set_visible(self, value):
         factory.CityBagDlg.set_visible(self, value)
         if value:
+            if not self.runtime.hall.hero_page.visible:
+                self.runtime.hall.hero_page.capture_hall_camera()
             FsmGame.set_hero_only_move(True)
             self.topmostEx()
         elif hasattr(self.runtime.hall, 'hero_page') and not self.runtime.hall.hero_page.visible:

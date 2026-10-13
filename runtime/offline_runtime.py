@@ -20,10 +20,18 @@ class LocalRuntime(object):
         self.log = log
         self.last_error = None
         self.exercise_result = None
-        self.command_id = None
+        # A command left by the previous debug session must not run on launch.
+        try:
+            self.command_id = json.load(open(COMMAND)).get('id')
+            self.command_mtime = os.path.getmtime(COMMAND)
+        except Exception:
+            self.command_id = None
+            self.command_mtime = None
         self.command_completed_id = None
         self.appearance_applied = None
+        self.appearance_updates = 0
         self.bag = None
+        self.status_pending = False
         self.hero_ids = sorted(int(h) for h in ClientUtils.get_hero_use(None, taste_included=False)
                                if 0 < int(h) < 1000 and hasattr(rc, 'ICON_HERO_LARGE_%04d' % int(h)))
         try:
@@ -33,8 +41,23 @@ class LocalRuntime(object):
         context = {}
         execfile('../res/editor/client/offline_hall.py', context)
         self.hall = context['install'](self, log)
-        BigWorld.callback(0.5, self.apply_saved_appearance)
+        BigWorld.enablePlayerFade(False)
+        BigWorld.limitForegroundFPS(80)
+        BigWorld.callback(0.5, lambda: self.apply_saved_appearance(True))
+        BigWorld.callback(0.5, self.place_in_hall)
         BigWorld.callback(0.5, self.poll)
+
+    def place_in_hall(self):
+        player = BigWorld.player()
+        if player is None or getattr(player, 'model', None) is None:
+            BigWorld.callback(0.5, self.place_in_hall)
+            return
+        # The original zc_new01 minimap is centred at world X/Z (52, 178).
+        player.physics.teleport((52.0, 229.0, 178.0), (0.0, 0.0, 0.0))
+        self.hall.hero_page.hall_pitch = 0.0
+        self.hall.hero_page.hall_yaw = 0.0
+        self.hall.hero_page.restore_hall_control()
+        self.log('Offline player placed at central hall: '+repr(tuple(player.position)))
 
     def hide_map(self):
         minimap = guiManager.get_ui('miniMap')
@@ -75,16 +98,16 @@ class LocalRuntime(object):
         self.profile['hero_type'] = hero_type
         self.save()
         self.hall.update_hero()
-        BigWorld.callback(0.5, self.apply_saved_appearance)
+        BigWorld.callback(0.5, lambda: self.apply_saved_appearance(True))
 
-    def apply_saved_appearance(self):
+    def apply_saved_appearance(self, force=False):
         player = BigWorld.player()
         if player is None or getattr(player, 'model', None) is None:
-            BigWorld.callback(0.5, self.apply_saved_appearance)
+            BigWorld.callback(0.5, lambda: self.apply_saved_appearance(force))
             return
         hero_type = int(player.hero_type)
         if getattr(player, 'model_id', None) != hero_type:
-            BigWorld.callback(0.5, self.apply_saved_appearance)
+            BigWorld.callback(0.5, lambda: self.apply_saved_appearance(force))
             return
         appearance = self.profile.get('appearance', {}).get(str(hero_type), {})
         fashion_id = int(appearance.get('fashion', self.profile.get('fashion', {}).get(str(hero_type), 0)) or 0)
@@ -95,8 +118,12 @@ class LocalRuntime(object):
             return
         try:
             old = list(getattr(player, 'root_fashions', []) or [])
+            if not force and old == fashions:
+                self.appearance_applied = marker
+                return
             player.fashions = fashions
             player.set_fashions(old)
+            self.appearance_updates += 1
             self.appearance_applied = marker
             self.log('Applied local hall appearance: '+repr(fashions))
             self.write_status()
@@ -109,6 +136,12 @@ class LocalRuntime(object):
             json.dump(self.profile, stream, indent=2)
 
     def write_status(self):
+        if not self.status_pending:
+            self.status_pending = True
+            BigWorld.callback(0.05, self._write_status)
+
+    def _write_status(self):
+        self.status_pending = False
         try:
             result = {'state':FsmGame.state(), 'hero_type':int(BigWorld.player().hero_type),
                       'command_completed_id':self.command_completed_id,
@@ -127,8 +160,9 @@ class LocalRuntime(object):
 
     def poll(self):
         try:
-            if os.path.isfile(COMMAND):
+            if os.path.isfile(COMMAND) and os.path.getmtime(COMMAND) != self.command_mtime:
                 command = json.load(open(COMMAND))
+                self.command_mtime = os.path.getmtime(COMMAND)
                 if command.get('id') != self.command_id:
                     self.command_id = command.get('id')
                     self.last_error = None

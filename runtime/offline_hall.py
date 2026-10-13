@@ -37,6 +37,7 @@ class OfflineHall(object):
         self.parts = {}
         self.errors = {}
         self.buttons = []
+        self.chat_open = False
         for name, build in [('navigation', self.navigation), ('activities', self.activities),
                             ('toolbar', self.toolbar), ('chat', self.chat), ('team', self.team)]:
             try:
@@ -127,9 +128,39 @@ class OfflineHall(object):
         for name in ['show_content', 'con_list', 'tab_content', 'con_unable', 'con_timer', 'con_emote', 'img_bg']:
             getattr(chat, name).visible = False
         chat.btn_channel.text = gb(u'\u5206\u7ebf')
-        chat.chat_edit.event_text_enter = self.notice
+        self.chat_panel = chat
+        chat.chat_edit.event_text_enter = lambda sender: self.close_chat()
+        chat.chat_edit.event_text_escape = lambda sender: self.close_chat()
+        chat.chat_edit.event_active_changed = self.chat_focus_changed
         chat.btn_send.event_click = self.notice
         chat.btn_channel.event_click = self.notice
+
+    def open_chat(self):
+        if self.chat_open:
+            return
+        self.hero_page.capture_hall_camera()
+        self.heroes.close_bag()
+        self.chat_open = True
+        for name in ['show_content', 'con_list', 'img_bg']:
+            getattr(self.chat_panel, name).visible = True
+        FsmGame.set_hero_only_move(True)
+        FsmGame.init().mode = FsmGame.MOD_NOML
+        self.chat_panel.chat_edit.active = True
+
+    def close_chat(self):
+        if not self.chat_open:
+            return
+        self.chat_open = False
+        self.chat_panel.chat_edit.active = False
+        for name in ['show_content', 'con_list', 'img_bg']:
+            getattr(self.chat_panel, name).visible = False
+        self.hero_page.restore_hall_control()
+
+    def chat_focus_changed(self, sender):
+        if self.chat_panel.chat_edit.active and not self.chat_open:
+            self.open_chat()
+        elif not self.chat_panel.chat_edit.active and self.chat_open:
+            self.close_chat()
 
     def team(self):
         panel = self.visible(factory.GroupMainDlg())

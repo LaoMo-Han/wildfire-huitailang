@@ -13,6 +13,11 @@ def deploy(client, profile):
     for path in source.glob('*.py'):
         atomic_write(client/'res/editor/client'/path.name, path.read_bytes())
     atomic_write(client/'bootstrap/EditorConf.py', (source/'EditorConf.py').read_bytes())
+    marker = client/'res/editor/client/offline_hall.enabled'
+    if profile == 'hall-ui':
+        atomic_write(marker, b'Original city HUD enabled.\n')
+    elif marker.exists():
+        marker.unlink()
     command = b'@echo off\r\ncopy /y "%~dp0bootstrap\EditorConf.py" "%~dp0res\editor\client\EditorConf.py" >nul\r\nif errorlevel 1 exit /b 1\r\ncd /d "%~dp0game"\r\nstart "" "wf.exe"\r\n'
     atomic_write(client/'start_offline.cmd', command)
     legacy = client/'start_offline_test.cmd'
@@ -24,6 +29,6 @@ def deploy(client, profile):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--client', type=Path, required=True)
-    parser.add_argument('--profile', choices=['hall', 'heroes'], default='heroes')
+    parser.add_argument('--profile', choices=['hall', 'heroes', 'hall-ui'], default='heroes')
     args = parser.parse_args()
     deploy(args.client, args.profile)

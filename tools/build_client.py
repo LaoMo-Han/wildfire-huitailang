@@ -167,6 +167,8 @@ def stage(source, destination, executable, entities, profile):
     runtime = PROJECT/'milestones/offline-hall' if profile == 'hall' else PROJECT/'runtime'
     for path in runtime.glob('*.py'):
         shutil.copy2(path, local/path.name)
+    if profile == 'hall-ui':
+        (local/'offline_hall.enabled').write_text('Original city HUD enabled.\n', encoding='ascii')
     bootstrap = destination/'bootstrap'
     bootstrap.mkdir()
     shutil.copy2(runtime/'EditorConf.py', bootstrap/'EditorConf.py')
@@ -181,7 +183,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True, help='Client root containing game/ and res/')
     parser.add_argument('--output', type=Path)
-    parser.add_argument('--profile', choices=['hall', 'heroes'], default='hall')
+    parser.add_argument('--profile', choices=['hall', 'heroes', 'hall-ui'], default='hall')
     parser.add_argument('--verify-only', action='store_true')
     args = parser.parse_args()
     executable = patch_executable((args.source/'game/wf.exe').read_bytes())

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # This file is executed by the game's embedded Python 2.7 interpreter.
 import json
+import os
 import BigWorld
 
 data = {'offline_hero_type': 3, 'create_offline_enemy': False, 'allow_ui_preview': False}
@@ -24,6 +25,14 @@ def _install_menu():
         context = {'_offline_log': _offline_log}
         execfile('../res/editor/client/offline_ui.py', context)
         context['install']()
+        try:
+            hall_context = {}
+            if os.path.exists('../res/editor/client/offline_hall.enabled'):
+                execfile('../res/editor/client/offline_hall.py', hall_context)
+                hall_context['install'](context['controller'], _offline_log)
+        except Exception:
+            import traceback
+            _offline_log(traceback.format_exc())
     except Exception:
         import traceback
         error = traceback.format_exc()

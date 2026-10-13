@@ -107,7 +107,7 @@ class OfflineHeroMenu(object):
             return True
         return self.original_key_handler(down, key, vk, mods)
 
-    def select(self, hero_type):
+    def select(self, hero_type, close_menu=True):
         try:
             hero_type = int(hero_type)
             if hero_type not in self.hero_ids:
@@ -124,7 +124,10 @@ class OfflineHeroMenu(object):
             self.history.append({'before':before, 'requested':hero_type, 'after':int(BigWorld.player().hero_type)})
             self.last_error = None
             _offline_log('Local hero switch: '+str(before)+' -> '+str(hero_type))
-            self.hide()
+            if close_menu:
+                self.hide()
+            if hasattr(self, 'hall'):
+                self.hall.update_hero()
             BigWorld.callback(0.5, self.write_status)
         except Exception:
             self.last_error = traceback.format_exc()
@@ -140,10 +143,15 @@ class OfflineHeroMenu(object):
                 'hero_type': int(player.hero_type) if player is not None else None,
                 'player_class': player.__class__.__name__ if player is not None else None,
                 'hero_count':len(self.hero_ids), 'hero_ids':self.hero_ids,
-                'menu_visible': bool(self.panel.visible) if self.panel is not None else False,
+                'menu_visible': bool(self.original_hero_page.visible) if hasattr(self, 'original_hero_page') else bool(self.panel.visible),
                 'model_present':model is not None,
                 'panel_size':[int(self.panel.width), int(self.panel.height)] if self.panel is not None else None,
                 'switch_history':self.history[-10:], 'last_error':self.last_error,
+                'hall_parts':sorted(self.hall.parts) if hasattr(self, 'hall') else [],
+                'hall_errors':self.hall.errors if hasattr(self, 'hall') else {},
+                'hall_layout':self.hall.layout_status() if hasattr(self, 'hall') else {},
+                'visible_gui':self.visible_gui(),
+                'original_hero_page':self.original_hero_page.status() if hasattr(self, 'original_hero_page') else None,
             }
             with open(STATUS_PATH, 'w') as stream:
                 json.dump(status, stream, indent=2)
@@ -167,10 +175,25 @@ class OfflineHeroMenu(object):
                         self.select(command['hero_type'])
                     elif action == 'inspect':
                         self.write_status()
+                    elif action == 'reload_hall' and hasattr(self, 'hall'):
+                        self.hall.destroy()
+                        context = {}
+                        execfile('../res/editor/client/offline_hall.py', context)
+                        context['install'](self, _offline_log)
         except Exception:
             self.last_error = traceback.format_exc()
             _offline_log(self.last_error)
         BigWorld.callback(0.5, self.poll)
+
+    def visible_gui(self):
+        visible = []
+        for name, part in guiManager.instance().elements.items():
+            try:
+                if part.visible:
+                    visible.append(name)
+            except Exception:
+                pass
+        return sorted(visible)
 
 
 def install():

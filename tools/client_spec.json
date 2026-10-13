@@ -1,0 +1,30 @@
+{
+  "client_version": "1.0.192",
+  "wf_sha256": "c36805386844015d12dec81354c663c8fb3339855160f8b654a79a86cd479a5c",
+  "entities_sha256": "7f6040318de4f34a28e99882638eb8279035af83d38d72a39a236231e91383bd",
+  "patched_wf_sha256": "5f1fb1615de274fb4e9bf4d82dd695038aa244ccb225dff34f01f892d0706332",
+  "patched_entities_sha256": "49c5fc357af086d9aa0cd626d6968a131732943490834bcb48ea6206b8a991d0",
+  "modules": [
+    {
+      "suffix": "logic\\fsmgame.o",
+      "offset": 20688850,
+      "end": 20713770
+    },
+    {
+      "suffix": "guis\\logon\\logonpanel.o",
+      "offset": 36279708,
+      "end": 36323093
+    },
+    {
+      "suffix": "debug\\debugmanager.o",
+      "offset": 23231574,
+      "end": 23245267
+    }
+  ],
+  "scene": "zc_new01",
+  "spawn": [
+    69,
+    229,
+    223
+  ]
+}

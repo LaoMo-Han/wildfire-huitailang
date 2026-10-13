@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.exe
+*.dll
+*.bag
+*.npk
+*.zip
+*.dmp
+*.rep
+*.log
+user.dat
+offline_profile.json
+offline_status.json
+offline_command.json
+build/
+artifacts/
+.env*

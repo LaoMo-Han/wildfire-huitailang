@@ -5,9 +5,7 @@ import BigWorld
 import keys
 import Inventory
 import const
-import iAvatar
 import ClientConst
-from helper import fashiontool
 from guis import factory, guiManager
 from system import MsgManager, camera, ShortcutManager
 from guis.city import ActorField, CityManager
@@ -75,11 +73,28 @@ class LocalStory(StoryPhase.StoryPhase):
         self.on_chapterpage_set(self.chapter_page.page)
 
 
+class LocalSuit(FashionMgr.SuitObj):
+    @property
+    def item(self):
+        if not hasattr(self, '_local_item'):
+            item = FashionMgr.instance().fashion_items.get(self.item_id)
+            self._local_item = item if item is not None else FashionMgr.FashionItem(self.item_id, self.hero_type)
+        return self._local_item
+
+
 class LocalFashion(FashionPhase.FashionPhase):
     def init_ui(self):
         FashionPhase.FashionPhase.init_ui(self)
+        self._catalog_built = False
+        self._original_catalog_update = self.page_all.update
+        self.page_all.update = self.update_catalog
         self.page_hero.btn_equip.event_click = self.equip_selected
         self.page_hero.btn_buy.event_click = lambda sender: self.local_stage.hall.notice()
+
+    def update_catalog(self):
+        if not self._catalog_built:
+            self._original_catalog_update()
+            self._catalog_built = True
 
     def focus_suit(self, suit):
         if suit is None:
@@ -188,6 +203,7 @@ class HeroStage(object):
         self.parts = {}
         self.hidden = {}
         self.preview_linked = None
+        self.catalog_initialized = False
         self.menu_keys_down = set()
         self.control_restore_pending = False
         self.field = ActorField.ActorField('HeroEquips')
@@ -246,7 +262,10 @@ class HeroStage(object):
         if getattr(player, 'heros', None) is None:
             player.heros = dict((h, {'exp':0}) for h in self.runtime.hero_ids)
         player.is_hero_type_changed = lambda: False
-        player.clothes_press_data = {}
+        if getattr(player, 'clothes_press_data', None) is None:
+            player.clothes_press_data = {}
+        if self.catalog_initialized:
+            return
         manager = FashionMgr.instance()
         for hero_type in self.runtime.hero_ids:
             items = list(manager.hero_fashions.get(hero_type, []))
@@ -255,10 +274,11 @@ class HeroStage(object):
             saved = self.runtime.profile.get('fashion', {}).get(str(hero_type), ClientConst.DEFAULT_FASHION_ID)
             for index, item_id in enumerate(items):
                 number = hero_type*1000+index
-                suit = FashionMgr.SuitObj(FashionMgr.create_fashion_suit(hero_type, number, item_id, 0))
+                suit = LocalSuit(FashionMgr.create_fashion_suit(hero_type, number, item_id, 0))
                 manager.suit_data[number] = suit
                 if item_id == saved:
                     manager.equip_suit[hero_type] = number
+        self.catalog_initialized = True
 
     def tab_handler(self, name):
         def clicked(sender):
@@ -297,6 +317,8 @@ class HeroStage(object):
         return part
 
     def set_tab(self, name):
+        if name == self.tab and name in self.parts and self.parts[name].visible:
+            return
         try:
             part = self.ensure_tab(name)
             if part is None:
@@ -492,11 +514,13 @@ class HeroStage(object):
                     if model is not None:
                         marker = (actor.id, actor.hero_type, id(model))
                         if marker != self.preview_linked:
-                            actor.link_bh(False)
+                            if getattr(model, 'empty_bh', True):
+                                actor.link_bh(False)
                             self.preview_linked = marker
                         if hasattr(model, 'bh') and model.bh.isBehaviorReady():
-                            model.visible = True
-                            actor.fade_to(1.0, duration=0.0)
+                            if not model.visible:
+                                model.visible = True
+                                actor.fade_to(1.0, duration=0.0)
             except Exception:
                 self.errors['preview'] = traceback.format_exc()
                 self.log(self.errors['preview'])

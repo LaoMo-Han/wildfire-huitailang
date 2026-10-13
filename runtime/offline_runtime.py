@@ -21,6 +21,7 @@ class LocalRuntime(object):
         self.last_error = None
         self.exercise_result = None
         self.command_id = None
+        self.command_completed_id = None
         self.hero_ids = sorted(int(h) for h in ClientUtils.get_hero_use(None, taste_included=False)
                                if 0 < int(h) < 1000 and hasattr(rc, 'ICON_HERO_LARGE_%04d' % int(h)))
         try:
@@ -33,7 +34,9 @@ class LocalRuntime(object):
         BigWorld.callback(0.5, self.poll)
 
     def hide_map(self):
-        guiManager.get_ui('miniMap').real_set_visible(False)
+        minimap = guiManager.get_ui('miniMap')
+        if minimap.minimap.visible:
+            minimap.real_set_visible(False)
 
     def toggle(self):
         self.hall.hero_page.toggle()
@@ -58,6 +61,7 @@ class LocalRuntime(object):
     def write_status(self):
         try:
             result = {'state':FsmGame.state(), 'hero_type':int(BigWorld.player().hero_type),
+                      'command_completed_id':self.command_completed_id,
                       'hero_count':len(self.hero_ids), 'hero_ids':self.hero_ids,
                       'last_error':self.last_error, 'hall_errors':self.hall.errors,
                       'exercise_result':self.exercise_result,
@@ -91,6 +95,7 @@ class LocalRuntime(object):
                         execfile('../res/editor/client/hero_stage.py', context)
                         self.hall.hero_page.destroy()
                         context['install'](self.hall, self, self.log)
+                    self.command_completed_id = self.command_id
                     self.write_status()
         except Exception:
             self.last_error = traceback.format_exc()

@@ -8,6 +8,7 @@ import shutil
 import struct
 from xml.etree import ElementTree as ET
 from marshal27 import MarshalReader, flatten_codes
+from build_launcher import build_launcher, STARTUP_CMD
 
 PROJECT = Path(__file__).resolve().parent.parent
 SPEC = json.loads((PROJECT / 'tools/client_spec.json').read_text(encoding='utf-8'))
@@ -170,8 +171,9 @@ def stage(source, destination, executable, entities):
     bootstrap = destination/'bootstrap'
     bootstrap.mkdir()
     shutil.copy2(runtime/'EditorConf.py', bootstrap/'EditorConf.py')
+    build_launcher(destination)
     (game/'log.txt').touch()
-    (destination/'start_offline.cmd').write_bytes(b'@echo off\r\ncopy /y "%~dp0bootstrap\EditorConf.py" "%~dp0res\editor\client\EditorConf.py" >nul\r\nif errorlevel 1 exit /b 1\r\ncd /d "%~dp0game"\r\nstart "" "wf.exe"\r\n')
+    (destination/'start_offline.cmd').write_bytes(STARTUP_CMD)
     report = {'profile':'formal-hero-stage', 'source':str(source), 'output':str(destination), 'scene':SPEC['scene'], 'wf_sha256':sha(executable), 'entities_sha256':sha(entities), 'assets':'Other resource files may be hardlinked; never edit them in place.', 'runtime_verified':False}
     (destination/'build_manifest.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     return report

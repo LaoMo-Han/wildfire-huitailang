@@ -4,7 +4,7 @@ import traceback
 import BigWorld
 import ResMgr
 import rc
-from guis import factory, xnui, font, color, SysBox, guiManager
+from guis import factory, xnui, font, color, guiManager
 from guis.city.MainMenuBar import MainMenuBar as OriginalMenuBar
 from logic import FsmGame
 
@@ -52,7 +52,7 @@ class OfflineHall(object):
         return part
 
     def notice(self, sender=None):
-        SysBox.single_btn(text=gb(u'\u79bb\u7ebf\u5927\u5385\uff1a\u6b64\u529f\u80fd\u9700\u8981\u670d\u52a1\u5668\u6570\u636e\uff0c\u6682\u672a\u6062\u590d\u3002'))
+        pass
 
     def hero_clicked(self, sender=None):
         self.heroes.toggle()

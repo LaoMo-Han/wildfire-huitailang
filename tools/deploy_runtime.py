@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse
 from build_client import PROJECT, SPEC, sha, atomic_write
+from build_launcher import build_launcher, STARTUP_CMD
 
 
 def deploy(client):
@@ -10,6 +11,7 @@ def deploy(client):
     if sha((client/'res/entities.bag').read_bytes()) != SPEC['patched_entities_sha256']:
         raise ValueError('Target archive differs from the verified hall patch')
     source = PROJECT/'runtime'
+    build_launcher(client)
     for path in source.glob('*.py'):
         atomic_write(client/'res/editor/client'/path.name, path.read_bytes())
     atomic_write(client/'bootstrap/EditorConf.py', (source/'EditorConf.py').read_bytes())
@@ -17,11 +19,10 @@ def deploy(client):
         path = client/'res/editor/client'/obsolete
         if path.exists():
             path.unlink()
-    command = b'@echo off\r\ncopy /y "%~dp0bootstrap\EditorConf.py" "%~dp0res\editor\client\EditorConf.py" >nul\r\nif errorlevel 1 exit /b 1\r\ncd /d "%~dp0game"\r\nstart "" "wf.exe"\r\n'
-    atomic_write(client/'start_offline.cmd', command)
+    atomic_write(client/'start_offline.cmd', STARTUP_CMD)
     legacy = client/'start_offline_test.cmd'
     if legacy.exists():
-        atomic_write(legacy, command)
+        atomic_write(legacy, STARTUP_CMD)
     print('Runtime and persistent startup template deployed: '+str(client))
 
 

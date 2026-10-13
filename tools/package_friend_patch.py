@@ -11,7 +11,7 @@ GUIDE = '''无尽战区 · 灰太狼离线大厅补丁
 1. 先准备完整的 1.0.192 原客户端，复制一份单独使用。
 2. 将此 ZIP 的所有内容解压到这份客户端根目录。game、res、bootstrap
    必须与客户端同名目录合并；提示替换时选择替换。
-3. 双击 start_offline.cmd，等待进入离线大厅。无需 Python 或账号。
+3. 双击 开始游戏.exe（或 start_offline.cmd），等待进入离线大厅。无需 Python 或账号。
    不要启动 game/wf.exe，也不要用旧的官方更新器。
 
 操作：WASD 移动；鼠标转视角；Ctrl 按一次显示光标，再按一次隐藏。
@@ -24,7 +24,8 @@ Esc 在菜单内返回；在大厅弹出退出确认，再按一次 Esc 取消�
 背包浏览的是此客户端中的全部物品目录，按分类分页加载。
 原素材缺少图标的条目会显示原版问号占位图。
 鼠标停在道具上显示原版信息。出生点在大厅中央，角色近距离淡化关闭。
-前台使用原版 80 FPS 上限；切页和切回窗口保留视角。
+右上角设置的画面页可选 60/80/120/144/165/240 FPS 或不限制，点击应用保存。
+默认 80 FPS；开启垂直同步时还会受屏幕刷新率限制。切页和切回窗口保留视角。
 此版本用于本地大厅和角色预览，匹配、账号服务与联机尚未恢复。
 首次加载模型或贴图仍可能短暂停顿。
 
@@ -48,7 +49,7 @@ def package(client, output):
         node = config.find(key)
         if node is not None:
             node.text = value
-    files = [Path('game/wf.exe'), Path('res/entities.bag'), Path('launch.exe'),
+    files = [Path('game/wf.exe'), Path('res/entities.bag'), Path('launch.exe'), Path('开始游戏.exe'),
              Path('start_offline.cmd'), Path('bootstrap/EditorConf.py')]
     files += [Path('res/editor/client')/path.name for path in (PROJECT/'runtime').glob('*.py')]
     with zipfile.ZipFile(output, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:

@@ -593,6 +593,14 @@ class HeroStage(object):
                     self.exit_cancelled()
                 return True
             return False
+        settings = getattr(self.runtime, 'settings', None)
+        if settings is not None and settings.ui.visible:
+            if key == keys.KEY_ESCAPE:
+                if down:
+                    settings.ui.visible = False
+                    self.restore_hall_control()
+                return True
+            return False
         if self.hall.chat_open:
             if key in (keys.KEY_RETURN, keys.KEY_ESCAPE):
                 if down:

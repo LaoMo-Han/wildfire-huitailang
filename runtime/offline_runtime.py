@@ -3,6 +3,7 @@
 import json
 import os
 import traceback
+import time
 import BigWorld
 import ResMgr
 import rc
@@ -42,10 +43,30 @@ class LocalRuntime(object):
         execfile('../res/editor/client/offline_hall.py', context)
         self.hall = context['install'](self, log)
         BigWorld.enablePlayerFade(False)
-        BigWorld.limitForegroundFPS(80)
+        context = {}
+        execfile('../res/editor/client/offline_settings.py', context)
+        self.settings = context['install'](self)
+        self.scene_preload = None
+        BigWorld.callback(0.3, self.preload_hall)
         BigWorld.callback(0.5, lambda: self.apply_saved_appearance(True))
         BigWorld.callback(0.5, self.place_in_hall)
         BigWorld.callback(0.5, self.poll)
+
+    def preload_hall(self):
+        # Original SpaceManager uses this engine API to pre-load a whole space.
+        # Only request our small city once, never the hero preview/battle spaces.
+        player = BigWorld.player()
+        if player is None:
+            return
+        space_id = player.spaceID
+        spaces = dict(BigWorld.getAllSpaceInfo())
+        if 'zc_new01' not in spaces.get(space_id, ''):
+            return
+        start = time.clock()
+        BigWorld.loadSpaceChunks(space_id)
+        self.scene_preload = {'space_id':space_id, 'request_ms':round((time.clock()-start)*1000, 1)}
+        self.log('City chunk preload requested once: '+repr(self.scene_preload))
+        self.write_status()
 
     def place_in_hall(self):
         player = BigWorld.player()
@@ -148,6 +169,8 @@ class LocalRuntime(object):
                       'hero_count':len(self.hero_ids), 'hero_ids':self.hero_ids,
                       'last_error':self.last_error, 'hall_errors':self.hall.errors,
                       'exercise_result':self.exercise_result,
+                      'fps_limit':self.settings.limit,
+                      'scene_preload':self.scene_preload,
                       'bag':{'visible':bool(self.bag.visible),
                              'item_count':sum(len(x) for x in self.bag.items.values()),
                              'categories':dict((str(k), len(v)) for k, v in self.bag.items.items()),
@@ -178,7 +201,10 @@ class LocalRuntime(object):
                     elif action == 'apply':
                         self.hall.hero_page.apply_clicked(self.hall.hero_page.exit.btn_change_shape)
                     elif action == 'exercise':
-                        self.exercise_result = self.hall.hero_page.exercise(command['name'])
+                        if command['name'] == 'settings':
+                            self.exercise_result = self.settings.exercise()
+                        else:
+                            self.exercise_result = self.hall.hero_page.exercise(command['name'])
                     elif action == 'bag':
                         self.toggle_bag()
                     elif action == 'key':

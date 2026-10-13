@@ -30,8 +30,8 @@ python tools/build_client.py --source "C:\你的客户端目录" --verify-only
 
 生成器先核对原始文件 SHA256，遇到其他版本会停止。原始目录不做补丁修改，输出中的 `wf.exe` 与 `entities.bag` 是独立副本。其他素材可能通过硬链接复用，禁止直接改写这些素材文件。修改副本 EXE 的权限清单会使其原数字签名失效。
 
-## 下一阶段
+## 英雄列表与切换
 
-恢复英雄头像列表和离线切换英雄。`milestones/offline-hall/EditorConf.py` 保留已验证大厅启动代码；后续开发使用 `runtime`，不覆盖该里程碑。
+已恢复原头像列表和离线切换英雄，并实际验证模型切换、重启保留英雄。使用 `--profile heroes` 生成菜单版，H 打开/收起列表，点击或双击头像切换英雄。H 的重复打开与切换已由实体键盘验证。细节见 [英雄菜单说明](docs/hero-menu.md)。`milestones/offline-hall/EditorConf.py` 保留大厅启动代码；菜单开发使用 `runtime`，不覆盖该里程碑。
 
 详细验证与开发记录见 `docs`。Python 2 客户端脚本由游戏自身执行；分析工具不会在宿主 Python 中执行解出的游戏代码。

@@ -22,6 +22,8 @@ class LocalRuntime(object):
         self.exercise_result = None
         self.command_id = None
         self.command_completed_id = None
+        self.appearance_applied = None
+        self.bag = None
         self.hero_ids = sorted(int(h) for h in ClientUtils.get_hero_use(None, taste_included=False)
                                if 0 < int(h) < 1000 and hasattr(rc, 'ICON_HERO_LARGE_%04d' % int(h)))
         try:
@@ -31,14 +33,32 @@ class LocalRuntime(object):
         context = {}
         execfile('../res/editor/client/offline_hall.py', context)
         self.hall = context['install'](self, log)
-        self.appearance_applied = None
         BigWorld.callback(0.5, self.apply_saved_appearance)
         BigWorld.callback(0.5, self.poll)
 
     def hide_map(self):
         minimap = guiManager.get_ui('miniMap')
-        if minimap.minimap.visible:
+        if not getattr(minimap, '_offline_disabled', False):
             minimap.real_set_visible(False)
+            minimap.real_set_visible = lambda value: None
+            minimap.set_map_to_center = lambda: None
+            minimap.minimap_can_visible = lambda: False
+            minimap._offline_disabled = True
+        if minimap.minimap.visible:
+            minimap.minimap.visible = False
+
+    def toggle_bag(self):
+        if self.bag is None:
+            context = {}
+            execfile('../res/editor/client/offline_bag.py', context)
+            self.bag = context['LocalBag'](self)
+        self.bag.visible = not self.bag.visible
+
+    def close_bag(self):
+        if self.bag is not None and self.bag.visible:
+            self.bag.visible = False
+            return True
+        return False
 
     def toggle(self):
         self.hall.hero_page.toggle()
@@ -70,7 +90,7 @@ class LocalRuntime(object):
         fashion_id = int(appearance.get('fashion', self.profile.get('fashion', {}).get(str(hero_type), 0)) or 0)
         dye_id = int(appearance.get('dye') or 0)
         fashions = ([fashion_id] if fashion_id else []) + ([dye_id] if dye_id else []) + list(appearance.get('trinkets', []))
-        marker = (player.id, hero_type, tuple(fashions))
+        marker = (player.id, hero_type, id(player.model), tuple(fashions))
         if marker == self.appearance_applied:
             return
         try:
@@ -95,6 +115,10 @@ class LocalRuntime(object):
                       'hero_count':len(self.hero_ids), 'hero_ids':self.hero_ids,
                       'last_error':self.last_error, 'hall_errors':self.hall.errors,
                       'exercise_result':self.exercise_result,
+                      'bag':{'visible':bool(self.bag.visible),
+                             'item_count':sum(len(x) for x in self.bag.items.values()),
+                             'categories':dict((str(k), len(v)) for k, v in self.bag.items.items()),
+                             'pages_created':len(self.bag.pages)} if self.bag is not None else None,
                       'stage':self.hall.hero_page.status() if hasattr(self.hall, 'hero_page') else None}
             with open(STATUS, 'w') as stream:
                 json.dump(result, stream, indent=2)
@@ -107,6 +131,7 @@ class LocalRuntime(object):
                 command = json.load(open(COMMAND))
                 if command.get('id') != self.command_id:
                     self.command_id = command.get('id')
+                    self.last_error = None
                     action = command.get('action')
                     if action == 'show':
                         self.hall.hero_page.show()
@@ -120,6 +145,13 @@ class LocalRuntime(object):
                         self.hall.hero_page.apply_clicked(self.hall.hero_page.exit.btn_change_shape)
                     elif action == 'exercise':
                         self.exercise_result = self.hall.hero_page.exercise(command['name'])
+                    elif action == 'bag':
+                        self.toggle_bag()
+                    elif action == 'key':
+                        import keys
+                        key = getattr(keys, 'KEY_'+command['key'])
+                        self.hall.hero_page.handle_menu_key(True, key, 0, 0)
+                        self.hall.hero_page.handle_menu_key(False, key, 0, 0)
                     elif action == 'reload_stage':
                         context = {}
                         execfile('../res/editor/client/hero_stage.py', context)
@@ -130,6 +162,8 @@ class LocalRuntime(object):
         except Exception:
             self.last_error = traceback.format_exc()
             self.log(self.last_error)
+            self.command_completed_id = self.command_id
+            self.write_status()
         BigWorld.callback(0.5, self.poll)
 
 

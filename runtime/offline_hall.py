@@ -107,7 +107,7 @@ class OfflineHall(object):
         bar.tmp_label_avatar.set_color_unpack(color.LIGHT_CYAN, 0)
         bar.img_set_frame.state = 'lv1'
         bar.friends_btn.event_click = self.notice
-        bar.bag.event_click = self.notice
+        bar.bag.event_click = lambda sender: self.heroes.toggle_bag()
         bar.mail_btn.event_click = self.notice
         bar.avatar_btn.event_click = self.hero_clicked
         self.bottom = bar

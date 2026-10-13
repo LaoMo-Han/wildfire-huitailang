@@ -7,12 +7,26 @@ import Inventory
 import Item
 import const
 import ClientConst
-from guis import factory, guiManager
+from guis import factory, guiManager, SysBox
 from system import MsgManager, camera, ShortcutManager
 from guis.city import ActorField, CityManager
 from guis.city.stage import SelectPart, BasicPhase, HeroVoicePhase, StoryPhase, PaintPhase, SharePhase, StageMenu
 from guis.city.fashion import FashionPhaseNew as FashionPhase
 from logic import FsmGame, FashionMgr, ClientEquipsContainer
+
+
+class LocalActorField(ActorField.ActorField):
+    def enter(self, *args, **kwargs):
+        self._reuse_scene = True
+        try:
+            return ActorField.ActorField.enter(self, *args, **kwargs)
+        finally:
+            self._reuse_scene = False
+
+    def clear(self):
+        if getattr(self, '_reuse_scene', False) and self.space_id is not None:
+            return
+        return ActorField.ActorField.clear(self)
 
 
 class LocalSelectPart(SelectPart.SelectPart):
@@ -236,8 +250,13 @@ class HeroStage(object):
         self.preview_linked = None
         self.catalog_initialized = False
         self.menu_keys_down = set()
+        self.cursor_shown = False
+        self.previous_camera_mouse = camera.bc.handle_mouse_event
+        self.camera_mouse_handler = self.handle_camera_mouse
+        camera.bc.handle_mouse_event = self.camera_mouse_handler
+        self.hall_camera_distance = camera.bc.bw_cam.pivotMaxDist
         self.control_restore_pending = False
-        self.field = ActorField.ActorField('HeroEquips')
+        self.field = LocalActorField('HeroEquips')
         self.city = CityManager.instance
         if self.city is None:
             raise RuntimeError('Original CityManager context is not initialized')
@@ -295,8 +314,6 @@ class HeroStage(object):
         player.is_hero_type_changed = lambda: False
         if getattr(player, 'clothes_press_data', None) is None:
             player.clothes_press_data = {}
-        if self.catalog_initialized:
-            return
         manager = FashionMgr.instance()
         cosmetic_ids = set(manager.dye_items)
         cosmetic_ids.add(const.FASHION_DYE_CLEANER_ID)
@@ -304,6 +321,8 @@ class HeroStage(object):
             cosmetic_ids.update(items)
         if not isinstance(player.inv, LocalCosmeticInventory):
             player.inv = LocalCosmeticInventory(cosmetic_ids)
+        if self.catalog_initialized:
+            return
         for hero_type in self.runtime.hero_ids:
             items = list(manager.hero_fashions.get(hero_type, []))
             if ClientConst.DEFAULT_FASHION_ID not in items:
@@ -390,16 +409,21 @@ class HeroStage(object):
         else:
             self.parts[self.tab].on_hero_select(self.hero_type)
 
-    def show(self):
+    def show(self, name=None):
+        if name is not None:
+            self.tab = name
         if self.visible:
+            if name is not None:
+                self.set_tab(name)
             return
         try:
+            self.runtime.hide_map()
+            self.runtime.close_bag()
             self.initialize_player()
             self.field.enter(self.hero_type, show_eff=False, enter_load_fashions=False, show_default_eff=False)
             self.visible = True
             for part in self.hall.parts.values():
                 part.visible = False
-            self.selector.connect(self, self.hero_type)
             self.tabs.visible = True
             self.exit.visible = True
             self.back.visible = True
@@ -446,11 +470,29 @@ class HeroStage(object):
         self.control_restore_pending = True
         self.resume_hall_behavior()
         FsmGame.init().mode = FsmGame.MOD_HERO
-        FsmGame.set_hero_only_move(False)
+        FsmGame.set_hero_only_move(self.cursor_shown)
         camera.tryReleaseDC(FsmGame.init())
         camera.bc()
         camera.bc.setTarget()
+        camera.bc.bw_cam.pivotMaxDist = self.hall_camera_distance
+        BigWorld.dcursor().minPitch = -1.569
+        BigWorld.dcursor().maxPitch = 1.569
         FsmGame.init().reset_mouse_state()
+
+    def handle_camera_mouse(self, dx, dy, dz):
+        if FsmGame.state_is_offline() and not self.visible and not self.cursor_shown and dz:
+            self.hall_camera_distance = max(1.0, min(30.0,
+                self.hall_camera_distance*(0.9 if dz > 0 else 1.0/0.9)))
+            camera.bc.bw_cam.pivotMaxDist = self.hall_camera_distance
+            camera.bc.bw_cam.maxDistHalfLife = 0.1
+            return True
+        return self.previous_camera_mouse(dx, dy, dz)
+
+    def confirm_exit(self):
+        if SysBox.instance().show_array:
+            return
+        SysBox.double_btn(text=u'\u786e\u5b9a\u9000\u51fa\u6e38\u620f\u5417\uff1f'.encode('gbk'),
+                          yes_callback=BigWorld.quit, cancel_key='offline_exit')
 
     def resume_hall_behavior(self):
         player = BigWorld.player()
@@ -468,31 +510,59 @@ class HeroStage(object):
         self.hide() if self.visible else self.show()
 
     def handle_menu_key(self, down, key, vk, mods):
+        try:
+            result = self.handle_menu_key_impl(down, key, vk, mods)
+            if result:
+                self.runtime.write_status()
+            return result
+        except Exception:
+            self.runtime.last_error = traceback.format_exc()
+            self.log(self.runtime.last_error)
+            self.runtime.write_status()
+            return True
+
+    def handle_menu_key_impl(self, down, key, vk, mods):
         # The engine caches tw2's entry point. Use its existing FSM listener
         # for the requested menu/return keys; movement continues through the FSM.
+        if not down:
+            self.menu_keys_down.discard(key)
+        if SysBox.instance().show_array:
+            return False
         if FsmGame.state_is_offline() and not self.visible and key in (
                 keys.KEY_LCONTROL, getattr(keys, 'KEY_RCONTROL', keys.KEY_LCONTROL)):
-            ShortcutManager.instance().ob_show_cursor(bool(down))
+            if down and key not in self.menu_keys_down:
+                self.menu_keys_down.add(key)
+                self.cursor_shown = not self.cursor_shown
+                ShortcutManager.instance().ob_show_cursor(self.cursor_shown)
+            elif not down:
+                self.menu_keys_down.discard(key)
             return True
         if FsmGame.state_is_offline() and not mods:
-            menu_tabs = {keys.KEY_Z:None, keys.KEY_X:'fashion', keys.KEY_C:'voice', keys.KEY_V:'story'}
+            menu_tabs = {keys.KEY_Z:'equip', keys.KEY_X:'fashion', keys.KEY_C:'voice', keys.KEY_V:'story'}
             if key in menu_tabs:
                 if down and key not in self.menu_keys_down:
                     self.menu_keys_down.add(key)
                     name = menu_tabs[key]
-                    if name is None:
-                        self.toggle()
-                    elif self.visible and self.tab == name:
+                    if self.visible and self.tab == name:
                         self.hide()
                     else:
-                        self.show()
-                        self.set_tab(name)
+                        self.show(name)
                 elif not down:
                     self.menu_keys_down.discard(key)
                 return True
-            if key == keys.KEY_ESCAPE and self.visible:
-                if down:
-                    self.hide()
+            if key in (keys.KEY_B, keys.KEY_ESCAPE):
+                if down and key not in self.menu_keys_down:
+                    self.menu_keys_down.add(key)
+                    if key == keys.KEY_B:
+                        self.runtime.toggle_bag()
+                    elif self.runtime.close_bag():
+                        pass
+                    elif self.visible:
+                        self.hide()
+                    else:
+                        self.confirm_exit()
+                elif not down:
+                    self.menu_keys_down.discard(key)
                 return True
         if self.previous_key_listener is not None:
             return self.previous_key_listener(down, key, vk, mods)
@@ -500,6 +570,8 @@ class HeroStage(object):
 
     def handle_app_active(self, active):
         self.previous_active_handler(active)
+        if not active:
+            self.menu_keys_down.clear()
         if active and not self.visible and not self.closed:
             self.restore_hall_control()
 
@@ -595,6 +667,9 @@ class HeroStage(object):
         result['camera_class'] = camera.inst.current.__class__.__name__
         result['cursor_mode'] = bool(FsmGame.HERO_ONLY_MOVE)
         result['camera_can_rotate'] = bool(BigWorld.dcursor().canRotate)
+        result['hall_camera_distance'] = self.hall_camera_distance
+        result['pitch_limits'] = [BigWorld.dcursor().minPitch, BigWorld.dcursor().maxPitch]
+        result['cursor_toggle'] = self.cursor_shown
         result['visible_hero_count'] = len(self.selector.part_basic.hero_list.use_heros)
         result['content_counts'] = {}
         if 'fashion' in self.parts:
@@ -615,6 +690,31 @@ class HeroStage(object):
         return result
 
     def exercise(self, action):
+        if action == 'exit_dialog':
+            self.confirm_exit()
+            result = {'confirmation_visible':bool(SysBox.instance().show_array)}
+            SysBox.clear('offline_exit')
+            self.restore_hall_control()
+            return result
+        if action == 'catalog':
+            if self.runtime.bag is not None:
+                self.runtime.bag.visible = False
+                self.runtime.bag.destroy()
+                self.runtime.bag = None
+            self.runtime.toggle_bag()
+            bag = self.runtime.bag
+            counts = {}
+            for pid in sorted(bag.items):
+                bag.select_category(pid)
+                counts[str(pid)] = len(bag.items[pid])
+            return {'categories':counts, 'classification_errors':bag.classification_errors,
+                    'total':sum(counts.values()), 'grids_per_page':len(bag.pages[bag.current_pid].grids)}
+        if action == 'camera':
+            self.handle_camera_mouse(0, 0, 120)
+            close = self.hall_camera_distance
+            self.handle_camera_mouse(0, 0, -120)
+            return {'zoom_in':close, 'zoom_out':self.hall_camera_distance,
+                    'pitch_limits':[BigWorld.dcursor().minPitch, BigWorld.dcursor().maxPitch]}
         if action == 'filter':
             basic = self.selector.part_basic
             basic.on_btn_a_click(basic.btn_a)
@@ -666,10 +766,15 @@ class HeroStage(object):
         if self.visible:
             self.hide()
         self.closed = True
+        # Release the preview scene after its GUI references are detached.
+        # The game itself owns final process shutdown cleanup.
+        BigWorld.callback(0.1, self.field.clear)
         if FsmGame.init().exclusive_key_listener == self.menu_key_listener:
             FsmGame.init().exclusive_key_listener = self.previous_key_listener
         if FsmGame.active == self.active_handler:
             FsmGame.active = self.previous_active_handler
+        if camera.bc.handle_mouse_event == self.camera_mouse_handler:
+            camera.bc.handle_mouse_event = self.previous_camera_mouse
         self.selector.part_basic.destroy()
         self.selector.part_collect.destroy()
         self.selector.part_btn.destroy()

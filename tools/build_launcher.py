@@ -9,14 +9,14 @@ STARTUP_CMD = (
     b'@echo off\r\n'
     b'copy /y "%~dp0bootstrap\\EditorConf.py" "%~dp0res\\editor\\client\\EditorConf.py" >nul\r\n'
     b'if errorlevel 1 exit /b 1\r\n'
-    b'start "" "%~dp0bootstrap\\OfflineLauncher.exe"\r\n'
+    b'start "" "%~dp0launch.exe"\r\n'
 )
 
 
 def build_launcher(client):
     bootstrap = client/'bootstrap'
     bootstrap.mkdir(parents=True, exist_ok=True)
-    executable = bootstrap/'OfflineLauncher.exe'
+    executable = client/'launch.exe'
     marker = bootstrap/'OfflineLauncher.source.sha256'
     source_hash = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
     if executable.exists() and marker.exists() and marker.read_text().strip() == source_hash:

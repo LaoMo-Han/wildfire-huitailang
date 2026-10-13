@@ -31,6 +31,8 @@ class LocalRuntime(object):
         context = {}
         execfile('../res/editor/client/offline_hall.py', context)
         self.hall = context['install'](self, log)
+        self.appearance_applied = None
+        BigWorld.callback(0.5, self.apply_saved_appearance)
         BigWorld.callback(0.5, self.poll)
 
     def hide_map(self):
@@ -53,6 +55,34 @@ class LocalRuntime(object):
         self.profile['hero_type'] = hero_type
         self.save()
         self.hall.update_hero()
+        BigWorld.callback(0.5, self.apply_saved_appearance)
+
+    def apply_saved_appearance(self):
+        player = BigWorld.player()
+        if player is None or getattr(player, 'model', None) is None:
+            BigWorld.callback(0.5, self.apply_saved_appearance)
+            return
+        hero_type = int(player.hero_type)
+        if getattr(player, 'model_id', None) != hero_type:
+            BigWorld.callback(0.5, self.apply_saved_appearance)
+            return
+        appearance = self.profile.get('appearance', {}).get(str(hero_type), {})
+        fashion_id = int(appearance.get('fashion', self.profile.get('fashion', {}).get(str(hero_type), 0)) or 0)
+        dye_id = int(appearance.get('dye') or 0)
+        fashions = ([fashion_id] if fashion_id else []) + ([dye_id] if dye_id else []) + list(appearance.get('trinkets', []))
+        marker = (player.id, hero_type, tuple(fashions))
+        if marker == self.appearance_applied:
+            return
+        try:
+            old = list(getattr(player, 'root_fashions', []) or [])
+            player.fashions = fashions
+            player.set_fashions(old)
+            self.appearance_applied = marker
+            self.log('Applied local hall appearance: '+repr(fashions))
+            self.write_status()
+        except Exception:
+            self.last_error = traceback.format_exc()
+            self.log(self.last_error)
 
     def save(self):
         with open(PROFILE, 'w') as stream:

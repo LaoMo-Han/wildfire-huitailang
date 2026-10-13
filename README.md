@@ -4,7 +4,7 @@
 
 ## 启动与操作
 
-本机入口是 `C:\wildfire-gpt\offline_client\start_offline.cmd`。双击即可进入大厅，无需确认 launch.exe 提示。入口会恢复被原游戏退出流程改写的启动模板，再运行不显示窗口的本地启动适配器；适配器随游戏退出而结束。
+本机入口是 `C:\wildfire-gpt\offline_client\start_offline.cmd`。入口会恢复被原游戏退出流程改写的启动模板，再运行本地启动适配器；适配器随游戏退出而结束。启动时的 launch.exe 警告仍在排查，当前可能需要点一次确定。
 
 - 大厅使用原来的 WASD 移动，鼠标转视角；按住 Ctrl 呼出光标，松开隐藏。
 - 点击大厅顶部“英雄”或按 Z 打开／关闭英雄页。

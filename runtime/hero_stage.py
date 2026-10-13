@@ -4,6 +4,7 @@ import traceback
 import BigWorld
 import keys
 import Inventory
+import Item
 import const
 import ClientConst
 from guis import factory, guiManager
@@ -81,6 +82,32 @@ class LocalSuit(FashionMgr.SuitObj):
             self._local_item = item if item is not None else FashionMgr.FashionItem(self.item_id, self.hero_type)
         return self._local_item
 
+    @property
+    def trinkets(self):
+        return list(getattr(self, '_local_trinkets', []))
+
+    def get_fashion_detail(self):
+        return ([self.item_id] if self.item_id else []) + ([self.dye] if self.dye else []) + self.trinkets
+
+
+class LocalCosmeticInventory(Inventory.Inventory):
+    def __init__(self, cosmetic_ids):
+        Inventory.Inventory.__init__(self, const.INV_TYPE_AVATAR)
+        self.cosmetic_ids = set(cosmetic_ids)
+        self.cosmetic_items = {}
+
+    def countByID(self, page, item_id):
+        if item_id in self.cosmetic_ids:
+            return 999
+        return Inventory.Inventory.countByID(self, page, item_id)
+
+    def getFirstItemByID(self, item_id):
+        if item_id in self.cosmetic_ids:
+            if item_id not in self.cosmetic_items:
+                self.cosmetic_items[item_id] = Item.Item(item_id)
+            return self.cosmetic_items[item_id]
+        return Inventory.Inventory.getFirstItemByID(self, item_id)
+
 
 class LocalFashion(FashionPhase.FashionPhase):
     def init_ui(self):
@@ -108,6 +135,10 @@ class LocalFashion(FashionPhase.FashionPhase):
         if suit is None:
             return
         stage.runtime.profile.setdefault('fashion', {})[str(suit.hero_type)] = suit.item_id
+        suit.dye = int(self.page_hero.tgt_dye_id or 0)
+        suit._local_trinkets = list(self.page_hero.tgt_trinket_ids)
+        stage.runtime.profile.setdefault('appearance', {})[str(suit.hero_type)] = {
+            'fashion':suit.item_id, 'dye':suit.dye, 'trinkets':suit.trinkets}
         stage.runtime.save()
         FashionMgr.instance().equip_suit[suit.hero_type] = suit.suit_no
         self.on_hero_select(suit.hero_type)
@@ -267,6 +298,12 @@ class HeroStage(object):
         if self.catalog_initialized:
             return
         manager = FashionMgr.instance()
+        cosmetic_ids = set(manager.dye_items)
+        cosmetic_ids.add(const.FASHION_DYE_CLEANER_ID)
+        for items in manager.hero_trinkets.values():
+            cosmetic_ids.update(items)
+        if not isinstance(player.inv, LocalCosmeticInventory):
+            player.inv = LocalCosmeticInventory(cosmetic_ids)
         for hero_type in self.runtime.hero_ids:
             items = list(manager.hero_fashions.get(hero_type, []))
             if ClientConst.DEFAULT_FASHION_ID not in items:
@@ -275,6 +312,10 @@ class HeroStage(object):
             for index, item_id in enumerate(items):
                 number = hero_type*1000+index
                 suit = LocalSuit(FashionMgr.create_fashion_suit(hero_type, number, item_id, 0))
+                appearance = self.runtime.profile.get('appearance', {}).get(str(hero_type), {})
+                if appearance.get('fashion') == item_id:
+                    suit.dye = int(appearance.get('dye') or 0)
+                    suit._local_trinkets = list(appearance.get('trinkets', []))
                 manager.suit_data[number] = suit
                 if item_id == saved:
                     manager.equip_suit[hero_type] = number
@@ -395,6 +436,7 @@ class HeroStage(object):
         self.hidden.clear()
         self.visible = False
         self.restore_hall_control()
+        self.runtime.apply_saved_appearance()
         self.runtime.hide_map()
         self.runtime.write_status()
 
@@ -440,6 +482,8 @@ class HeroStage(object):
                     name = menu_tabs[key]
                     if name is None:
                         self.toggle()
+                    elif self.visible and self.tab == name:
+                        self.hide()
                     else:
                         self.show()
                         self.set_tab(name)
@@ -543,6 +587,7 @@ class HeroStage(object):
         player = BigWorld.player()
         result['player_class'] = player.__class__.__name__
         result['player_position'] = list(player.position)
+        result['hall_fashions'] = list(getattr(player, 'root_fashions', []) or [])
         result['player_input_enabled'] = bool(getattr(player, 'input_enabled', False))
         result['player_freeze_move'] = bool(getattr(player, 'freeze_move_flag', False))
         result['player_behavior_ready'] = bool(player.model.bh.isBehaviorReady()) if getattr(player, 'model', None) is not None and hasattr(player.model, 'bh') else False

@@ -125,7 +125,7 @@ def atomic_write(path, data):
     os.replace(temporary, path)
 
 
-def stage(source, destination, executable, entities, profile):
+def stage(source, destination, executable, entities):
     if source.resolve() == destination.resolve() or source.resolve() in destination.resolve().parents or destination.resolve() in source.resolve().parents:
         raise ValueError('Output must be separate from the original client tree')
     if destination.exists():
@@ -164,17 +164,15 @@ def stage(source, destination, executable, entities, profile):
     tree.write(game/'conf.xml', encoding='utf-8', xml_declaration=True)
     local = res/'editor/client'
     local.mkdir(parents=True)
-    runtime = PROJECT/'milestones/offline-hall' if profile == 'hall' else PROJECT/'runtime'
+    runtime = PROJECT/'runtime'
     for path in runtime.glob('*.py'):
         shutil.copy2(path, local/path.name)
-    if profile == 'hall-ui':
-        (local/'offline_hall.enabled').write_text('Original city HUD enabled.\n', encoding='ascii')
     bootstrap = destination/'bootstrap'
     bootstrap.mkdir()
     shutil.copy2(runtime/'EditorConf.py', bootstrap/'EditorConf.py')
     (game/'log.txt').touch()
     (destination/'start_offline.cmd').write_bytes(b'@echo off\r\ncopy /y "%~dp0bootstrap\EditorConf.py" "%~dp0res\editor\client\EditorConf.py" >nul\r\nif errorlevel 1 exit /b 1\r\ncd /d "%~dp0game"\r\nstart "" "wf.exe"\r\n')
-    report = {'profile':profile, 'source':str(source), 'output':str(destination), 'scene':SPEC['scene'], 'wf_sha256':sha(executable), 'entities_sha256':sha(entities), 'assets':'Other resource files may be hardlinked; never edit them in place.', 'runtime_verified':profile == 'hall'}
+    report = {'profile':'formal-hero-stage', 'source':str(source), 'output':str(destination), 'scene':SPEC['scene'], 'wf_sha256':sha(executable), 'entities_sha256':sha(entities), 'assets':'Other resource files may be hardlinked; never edit them in place.', 'runtime_verified':False}
     (destination/'build_manifest.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     return report
 
@@ -183,7 +181,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True, help='Client root containing game/ and res/')
     parser.add_argument('--output', type=Path)
-    parser.add_argument('--profile', choices=['hall', 'heroes', 'hall-ui'], default='hall')
     parser.add_argument('--verify-only', action='store_true')
     args = parser.parse_args()
     executable = patch_executable((args.source/'game/wf.exe').read_bytes())
@@ -193,7 +190,7 @@ def main():
     else:
         if args.output is None:
             parser.error('--output is required without --verify-only')
-        report = stage(args.source, args.output, executable, entities, args.profile)
+        report = stage(args.source, args.output, executable, entities)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

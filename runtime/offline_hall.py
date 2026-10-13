@@ -166,19 +166,14 @@ class OfflineHall(object):
 def install(heroes, log):
     hall = OfflineHall(heroes, log)
     heroes.hall = hall
-    heroes.visible_gui = hall.visible_gui
-    heroes.open_button.visible = False
-    heroes.panel.visible = False
     heroes.hide_map()
     guiManager.get_ui('city_fps_bar')._set_container_visible(False)
     try:
         context = {}
-        execfile('../res/editor/client/offline_hero_page.py', context)
+        execfile('../res/editor/client/hero_stage.py', context)
         context['install'](hall, heroes, log)
     except Exception:
         hall.errors['hero_page'] = traceback.format_exc()
         log(hall.errors['hero_page'])
-    if FsmGame.mode() != FsmGame.MOD_NOML:
-        FsmGame.operate_change()
-    heroes.write_status()
+    FsmGame.init().mode = FsmGame.MOD_HERO
     return hall

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # This file is executed by the game's embedded Python 2.7 interpreter.
 import json
-import os
 import BigWorld
 
 data = {'offline_hero_type': 3, 'create_offline_enemy': False, 'allow_ui_preview': False}
@@ -22,17 +21,9 @@ def _offline_log(message):
 
 def _install_menu():
     try:
-        context = {'_offline_log': _offline_log}
-        execfile('../res/editor/client/offline_ui.py', context)
-        context['install']()
-        try:
-            hall_context = {}
-            if os.path.exists('../res/editor/client/offline_hall.enabled'):
-                execfile('../res/editor/client/offline_hall.py', hall_context)
-                hall_context['install'](context['controller'], _offline_log)
-        except Exception:
-            import traceback
-            _offline_log(traceback.format_exc())
+        context = {}
+        execfile('../res/editor/client/offline_runtime.py', context)
+        context['install'](_offline_log)
     except Exception:
         import traceback
         error = traceback.format_exc()
@@ -52,5 +43,5 @@ def _enter_offline_hall():
         _offline_log(traceback.format_exc())
 
 
-_offline_log('Hero menu bootstrap loaded.')
+_offline_log('Formal hero stage bootstrap loaded.')
 BigWorld.callback(5.0, _enter_offline_hall)

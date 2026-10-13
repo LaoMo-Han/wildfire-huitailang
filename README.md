@@ -12,7 +12,7 @@
 python tools/build_client.py --source "C:\你的客户端目录" --output "C:\offline_hall" --profile hall
 ```
 
-`--source` 指向同时包含 `game` 与 `res` 的目录。双击生成的 `start_offline.cmd`；出现“建议使用 launch.exe”的提示时点“确定”，再等待加载。
+`--source` 指向同时包含 `game` 与 `res` 的目录。双击生成的 `start_offline.cmd`；出现“建议使用 launch.exe”的提示时点“确定”，再等待加载。启动器会恢复独立保存的启动模板，防止原客户端退出时改写 `EditorConf.py` 后丢失自动进入大厅功能。
 
 仅检查补丁是否与已验证版本完全一致：
 

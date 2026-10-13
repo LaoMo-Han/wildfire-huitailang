@@ -23,3 +23,5 @@ Request completed; resulting state: 2
 旧客户端使用自定义 Python opcode。分析器只读取对象结构；补丁依靠已验证的原始 opcode 模式，不使用标准 Python 2 反汇编结果直接重写整个游戏。
 
 当前限制：使用本地 Hero 和离线管理器，未初始化在线 CityManager 的账号、NPC、队伍与房间。截图中的大地图是客户端原 UI 的显示状态，下一阶段将整理显示和菜单。
+
+后续验证发现原 `EditorConf.save()` 会在正常退出时把 `EditorConf.py` 改写为只有 `data` 的设置文件。生成器现在将完整模板另外保存在 `bootstrap/EditorConf.py`，由 `start_offline.cmd` 每次启动先恢复模板。英雄选择保存在独立 `game/offline_profile.json`，避免与该改写冲突。必须从生成的 CMD 入口启动。

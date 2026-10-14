@@ -16,6 +16,7 @@ STARTUP_CMD = (
 def build_launcher(client):
     executable = build_executable(client, SOURCE, 'launch.exe')
     build_executable(client, Path(__file__).with_name('StartGame.cs'), '开始游戏.exe')
+    build_executable(client, Path(__file__).with_name('UpdateInstaller.cs'), 'update.exe')
     return executable
 
 
@@ -24,7 +25,12 @@ def build_executable(client, source, filename):
     bootstrap.mkdir(parents=True, exist_ok=True)
     executable = client/filename
     marker = bootstrap/(source.stem+'.source.sha256')
-    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    sources = [source]
+    if filename in ('launch.exe', 'update.exe'):
+        sources.append(Path(__file__).with_name('UpdateCore.cs'))
+    source_hash = hashlib.sha256(b''.join(p.read_bytes() for p in sources)).hexdigest()
+    config = b'<?xml version="1.0"?><configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.7.2"/></startup><runtime><AppContextSwitchOverrides value="Switch.System.Net.DontEnableSchUseStrongCrypto=false;Switch.System.Net.DontEnableSystemDefaultTlsVersions=false"/></runtime></configuration>'
+    (client/(filename+'.config')).write_bytes(config)
     if executable.exists() and marker.exists() and marker.read_text().strip() == source_hash:
         return executable
     windows = Path(os.environ.get('SystemRoot', r'C:\Windows'))
@@ -36,7 +42,9 @@ def build_executable(client, source, filename):
     temporary = bootstrap/(source.stem+'.building.exe')
     subprocess.run([str(compiler), '/nologo', '/target:winexe', '/platform:x86',
                     '/reference:System.Windows.Forms.dll', '/out:'+str(temporary),
-                    str(source)], check=True, timeout=60)
+                    '/reference:System.Web.Extensions.dll',
+                    '/reference:System.IO.Compression.dll', '/reference:System.IO.Compression.FileSystem.dll',
+                    *map(str,sources)], check=True, timeout=60)
     try:
         os.replace(temporary, executable)
     except PermissionError:

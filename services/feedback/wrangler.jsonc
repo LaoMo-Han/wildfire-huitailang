@@ -1,0 +1,10 @@
+{
+  "name": "wildfire-feedback",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "rules": [{"type":"Text","globs":["**/*.html"],"fallthrough":true}],
+  "d1_databases": [{"binding":"DB","database_name":"wildfire-feedback-db","database_id":"ac4e359b-316e-43e8-9910-6598187bce9b"}],
+  "vars": {"PUBLIC_ORIGIN":"https://laomo-han.github.io"},
+  "observability": {"enabled":true,"head_sampling_rate":0.1}
+}

@@ -3,7 +3,6 @@ import argparse
 import hashlib
 import zipfile
 from pathlib import Path
-import xml.etree.ElementTree as ET
 from build_client import PROJECT, SPEC, sha
 
 GUIDE = '''无尽战区 · 灰太狼离线大厅与练习场补丁
@@ -12,7 +11,14 @@ GUIDE = '''无尽战区 · 灰太狼离线大厅与练习场补丁
 2. 将此 ZIP 的所有内容解压到这份客户端根目录。game、res、bootstrap
    必须与客户端同名目录合并；提示替换时选择替换。
 3. 双击 开始游戏.exe（或 start_offline.cmd），等待进入离线大厅。无需 Python 或账号。
-   不要启动 game/wf.exe，也不要用旧的官方更新器。
+   不要启动 game/wf.exe，也不要用旧的官方更新器。支持 Windows 10/11、.NET 4.7.2 以上。
+
+更新：大厅和练习场右上角“检查更新”可下载修复版本，下载完成后点击
+“退出并更新”，退出后安装并重启。断网仍可玩已安装的版本。
+“反馈 Bug”会打开网页并带上版本号；无需登录，可提交文字和最多三张截图。
+反馈文字、截图将公开，提交前请遮住个人信息。
+游戏本体需下载全部 7z 分卷，再用 7-Zip 解压 .001 第一卷。
+发布页：https://laomo-han.github.io/wildfire-downloads/
 
 操作：WASD 移动；鼠标转视角；Ctrl 按一次显示光标，再按一次隐藏。
 Z 英雄、X 时装、C 语音、V 故事。同一按键再次按下返回大厅。
@@ -43,7 +49,7 @@ L 升一级，Shift+L 满级；Shift+B 同时重置装备、等级和金币。
 无需复制发件人的档案或日志。自己的选择会保存在
  game/offline_profile.json，删除该文件可重置自己的离线档案。
 
-GitHub：https://github.com/LaoMo-Han/wildfire-huitailang
+下载与反馈：https://laomo-han.github.io/wildfire-downloads/
 '''
 
 
@@ -55,18 +61,15 @@ def package(client, output):
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         raise ValueError('Choose a new patch ZIP name')
-    config = ET.parse(client/'game/conf.xml')
-    for key, value in {'screen/width':'1280','screen/height':'720','screen/windowed':'1'}.items():
-        node = config.find(key)
-        if node is not None:
-            node.text = value
     files = [Path('game/wf.exe'), Path('res/entities.bag'), Path('launch.exe'), Path('开始游戏.exe'),
+             Path('update.exe'), Path('launch.exe.config'), Path('update.exe.config'), Path('开始游戏.exe.config'),
              Path('start_offline.cmd'), Path('bootstrap/EditorConf.py')]
+    if (client/'version.json').exists():
+        files.append(Path('version.json'))
     files += [Path('res/editor/client')/path.name for path in (PROJECT/'runtime').glob('*.py')]
     with zipfile.ZipFile(output, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
         for relative in files:
             archive.write(client/relative, relative.as_posix())
-        archive.writestr('game/conf.xml', ET.tostring(config.getroot(), encoding='utf-8', xml_declaration=True))
         archive.writestr('使用说明.txt', GUIDE.encode('utf-8-sig'))
     print('Created: '+str(output))
     print('Size: '+str(output.stat().st_size))

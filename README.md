@@ -50,7 +50,13 @@ python tools/build_client.py --source "C:\你的客户端目录" --verify-only
 
 ## 给好友使用
 
-最直接的方式是将整个 `offline_client` 文件夹复制给好友，好友解压后双击 `开始游戏.exe`（也可使用 `start_offline.cmd`）。运行成品不需要 Python，也不需要登录账号。
+现在可直接发送[发布页](https://laomo-han.github.io/wildfire-downloads/)。页面提供本体分卷、
+完整覆盖补丁和匿名图文反馈。已有旧单机版的好友先手动覆盖一次最新补丁，之后在
+大厅／练习场右上角检查更新。断网仍可正常玩。维护与发布命令见
+[发布说明](docs/release-workflow.md)。
+
+完整客户端请使用发布工具生成的清理版分卷，避免带入开发副本中的个人档案和调试残留。
+好友解压后双击 `开始游戏.exe`（也可使用 `start_offline.cmd`）。运行成品不需要 Python，也不需要登录账号。
 
 若好友已有完整的同版本原客户端，可以用 `tools/package_friend_patch.py` 生成覆盖补丁包（包含独立客户端 EXE、已验证的脚本包、本地启动器及运行脚本，不包含个人档案、日志和调试命令）：
 

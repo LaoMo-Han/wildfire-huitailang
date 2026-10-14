@@ -50,6 +50,9 @@ class LocalRuntime(object):
         context = {}
         execfile('../res/editor/client/offline_settings.py', context)
         self.settings = context['install'](self)
+        context = {}
+        execfile('../res/editor/client/offline_updates.py', context)
+        self.updates = context['install'](self)
         self.scene_preload = None
         BigWorld.callback(0.3, self.preload_hall)
         BigWorld.callback(0.5, lambda: self.apply_saved_appearance(True))
@@ -178,6 +181,9 @@ class LocalRuntime(object):
                       'last_error':self.last_error, 'hall_errors':self.hall.errors,
                       'exercise_result':self.exercise_result,
                       'fps_limit':self.settings.limit,
+                      'updater':{'visible':bool(self.updates.panel.visible),
+                                 'state':self.updates.data.get('state'),
+                                 'current_version':self.updates.data.get('current_version')},
                       'scene_preload':self.scene_preload,
                       'practice':self.practice.status() if self.practice is not None else None,
                       'bag':{'visible':bool(self.bag.visible),

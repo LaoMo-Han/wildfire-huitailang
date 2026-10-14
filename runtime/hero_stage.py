@@ -344,6 +344,8 @@ class HeroStage(object):
 
     def initialize_player(self):
         player = BigWorld.player()
+        practice = getattr(self.runtime, 'practice', None)
+        player.move_only = practice is None or not practice.active
         if getattr(player, 'hero_equips', None) is None:
             player.hero_equips = {}
         if getattr(player, 'inv', None) is None:
@@ -512,9 +514,16 @@ class HeroStage(object):
         # The built-in offline state uses PlayerHero and needs the same resume.
         self.control_restore_pending = True
         self.resume_hall_behavior()
-        FsmGame.init().mode = FsmGame.MOD_NOML if self.hall.chat_open else FsmGame.MOD_HERO
         ui_cursor = self.cursor_shown or bool(self.runtime.bag is not None and self.runtime.bag.visible) or self.hall.chat_open
+        practice = getattr(self.runtime, 'practice', None)
+        in_battle = practice is not None and practice.active and not practice.loading
+        if in_battle:
+            ui_cursor = ui_cursor or practice.toolbar.hero_list.visible or any(
+                getattr(guiManager.instance().elements.get(name), 'visible', False) for name in practice.MODALS)
+            ui_cursor = ui_cursor or getattr(getattr(practice, 'map_dialog', None), 'visible', False)
+        FsmGame.init().mode = FsmGame.MOD_NOML if ui_cursor else FsmGame.MOD_HERO
         FsmGame.set_hero_only_move(ui_cursor)
+        BigWorld.player().move_only = ui_cursor or not in_battle
         camera.tryReleaseDC(FsmGame.init())
         if camera.inst.current is not camera.bc:
             camera.bc()
@@ -536,6 +545,9 @@ class HeroStage(object):
             self.hall_yaw = BigWorld.dcursor().yaw
 
     def handle_camera_mouse(self, dx, dy, dz):
+        practice = getattr(self.runtime, 'practice', None)
+        if practice is not None and practice.engaged:
+            return self.previous_camera_mouse(dx, dy, dz)
         if FsmGame.state_is_offline() and not self.visible and not self.cursor_shown and dz:
             self.hall_camera_distance = max(1.0, min(30.0,
                 self.hall_camera_distance*(0.9 if dz > 0 else 1.0/0.9)))
@@ -586,6 +598,9 @@ class HeroStage(object):
         # for the requested menu/return keys; movement continues through the FSM.
         if not down:
             self.menu_keys_down.discard(key)
+        practice = getattr(self.runtime, 'practice', None)
+        if practice is not None and practice.engaged:
+            return practice.handle_key(down, key, vk, mods)
         if SysBox.instance().show_array:
             if key == keys.KEY_ESCAPE:
                 if down:
@@ -615,6 +630,7 @@ class HeroStage(object):
                     self.capture_hall_camera()
                 self.cursor_shown = not self.cursor_shown
                 ShortcutManager.instance().ob_show_cursor(self.cursor_shown)
+                self.restore_hall_control()
             elif not down:
                 self.menu_keys_down.discard(key)
             return True

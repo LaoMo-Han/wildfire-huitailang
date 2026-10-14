@@ -24,7 +24,7 @@ class LocalNavigation(OriginalMenuBar):
         self.local_hall.notice(sender)
 
     def on_btn_practice_click(self, sender):
-        self.local_hall.notice(sender)
+        self.local_hall.heroes.practice.toggle_entry()
 
     def on_btn_observer_click(self, sender):
         self.local_hall.notice(sender)
@@ -67,7 +67,7 @@ class OfflineHall(object):
         top.cd_battle.visible = False
         top.btn_battle.text = ''
         top.btn_battle.event_click = self.notice
-        top.btn_practice.event_click = self.notice
+        top.btn_practice.event_click = top.on_btn_practice_click
         top.btn_observer.event_click = self.notice
 
     def activities(self):

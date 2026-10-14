@@ -32,6 +32,7 @@ class LocalRuntime(object):
         self.appearance_applied = None
         self.appearance_updates = 0
         self.bag = None
+        self.practice = None
         self.status_pending = False
         self.hero_ids = sorted(int(h) for h in ClientUtils.get_hero_use(None, taste_included=False)
                                if 0 < int(h) < 1000 and hasattr(rc, 'ICON_HERO_LARGE_%04d' % int(h)))
@@ -42,6 +43,9 @@ class LocalRuntime(object):
         context = {}
         execfile('../res/editor/client/offline_hall.py', context)
         self.hall = context['install'](self, log)
+        context = {}
+        execfile('../res/editor/client/offline_practice.py', context)
+        self.practice = context['install'](self)
         BigWorld.enablePlayerFade(False)
         context = {}
         execfile('../res/editor/client/offline_settings.py', context)
@@ -81,8 +85,12 @@ class LocalRuntime(object):
         self.log('Offline player placed at central hall: '+repr(tuple(player.position)))
 
     def hide_map(self):
+        if self.practice is not None and self.practice.active:
+            return
         minimap = guiManager.get_ui('miniMap')
         if not getattr(minimap, '_offline_disabled', False):
+            minimap._offline_original_methods = (minimap.real_set_visible, minimap.set_map_to_center,
+                                                  minimap.minimap_can_visible)
             minimap.real_set_visible(False)
             minimap.real_set_visible = lambda value: None
             minimap.set_map_to_center = lambda: None
@@ -171,6 +179,7 @@ class LocalRuntime(object):
                       'exercise_result':self.exercise_result,
                       'fps_limit':self.settings.limit,
                       'scene_preload':self.scene_preload,
+                      'practice':self.practice.status() if self.practice is not None else None,
                       'bag':{'visible':bool(self.bag.visible),
                              'item_count':sum(len(x) for x in self.bag.items.values()),
                              'categories':dict((str(k), len(v)) for k, v in self.bag.items.items()),
@@ -207,6 +216,8 @@ class LocalRuntime(object):
                             self.exercise_result = self.hall.hero_page.exercise(command['name'])
                     elif action == 'bag':
                         self.toggle_bag()
+                    elif action == 'practice':
+                        self.practice.command(command)
                     elif action == 'key':
                         import keys
                         key = getattr(keys, 'KEY_'+command['key'])

@@ -143,6 +143,13 @@ class LocalRuntime(object):
         self.hall.update_hero()
         BigWorld.callback(0.5, lambda: self.apply_saved_appearance(True))
 
+    def fashions_for(self, hero_type):
+        """The saved local look (fashion, dye, trinkets) for one hero."""
+        appearance = self.profile.get('appearance', {}).get(str(hero_type), {})
+        fashion_id = int(appearance.get('fashion', self.profile.get('fashion', {}).get(str(hero_type), 0)) or 0)
+        dye_id = int(appearance.get('dye') or 0)
+        return ([fashion_id] if fashion_id else []) + ([dye_id] if dye_id else []) + list(appearance.get('trinkets', []))
+
     def apply_saved_appearance(self, force=False):
         player = BigWorld.player()
         if player is None or getattr(player, 'model', None) is None:
@@ -154,10 +161,7 @@ class LocalRuntime(object):
             return
         if self.practice is not None and self.practice.active and not self.practice.loading:
             player.aim.active()
-        appearance = self.profile.get('appearance', {}).get(str(hero_type), {})
-        fashion_id = int(appearance.get('fashion', self.profile.get('fashion', {}).get(str(hero_type), 0)) or 0)
-        dye_id = int(appearance.get('dye') or 0)
-        fashions = ([fashion_id] if fashion_id else []) + ([dye_id] if dye_id else []) + list(appearance.get('trinkets', []))
+        fashions = self.fashions_for(hero_type)
         marker = (player.id, hero_type, id(player.model), tuple(fashions))
         if marker == self.appearance_applied:
             return
@@ -260,11 +264,6 @@ class LocalRuntime(object):
 
 def install(log):
     global controller
-    # The optional appearance package is local and absent from normal releases.
-    if os.path.isfile('../res/editor/client/saber_mod.py'):
-        context = {}
-        execfile('../res/editor/client/saber_mod.py', context)
-        context['install'](log)
     controller = LocalRuntime(log)
     controller.write_status()
     return controller

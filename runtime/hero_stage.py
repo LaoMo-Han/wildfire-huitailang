@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The formal StageSelectPart/StageInfoPart hero screen, using original pages."""
+import math
 import traceback
 import BigWorld
 import Math
@@ -14,6 +15,15 @@ from guis.city import ActorField, CityManager
 from guis.city.stage import SelectPart, BasicPhase, HeroVoicePhase, StoryPhase, PaintPhase, SharePhase, StageMenu
 from guis.city.fashion import FashionPhaseNew as FashionPhase
 from logic import FsmGame, FashionMgr, ClientEquipsContainer
+
+
+def source_clone_offset(yaw, index, ring_size=8, radius=1.15, spacing=0.65):
+    """Place successive copies on rings around the character, never stacked."""
+    ring = int(index)//ring_size
+    angle = yaw+(2.0*math.pi/ring_size)*(int(index) % ring_size)
+    distance = radius+spacing*ring
+    return (math.sin(angle)*distance, math.cos(angle)*distance)
+
 
 
 class LocalActorField(ActorField.ActorField):
@@ -277,12 +287,22 @@ class LocalShare(SharePhase.SharePhase):
 
 
 class HeroStage(object):
+    CLONE_LIMIT = 12
+
     def __init__(self, hall, runtime, log):
         self.hall, self.runtime, self.log = hall, runtime, log
         self.visible = False
         self.closed = False
         self.hero_type = int(BigWorld.player().hero_type)
         self.tab = 'equip'
+        self.hall_combat = False
+        self.source_clones = []
+        self.source_clone_serial = 0
+        self.source_clone_pending = 0
+        self.source_clone_attempts = 0
+        self.combat_key_cache = None
+        self.combat_buttons = set()
+        self.combat_keys_down = set()
         self.errors = {}
         self.parts = {}
         self.hidden = {}
@@ -466,6 +486,9 @@ class HeroStage(object):
             self.runtime.hide_map()
             self.runtime.close_bag()
             self.hall.close_chat()
+            # Pages are cursor-driven UI; return to the peaceful hall state so
+            # closing a page never drops the user back into combat.
+            self.hall_combat = False
             self.initialize_player()
             self.field.enter(self.hero_type, show_eff=False, enter_load_fashions=False, show_default_eff=False)
             self.visible = True
@@ -483,6 +506,7 @@ class HeroStage(object):
         except Exception:
             self.runtime.last_error = traceback.format_exc()
             self.log(self.runtime.last_error)
+        self.hall.refresh_hints()
         self.runtime.write_status()
 
     def hide(self):
@@ -511,12 +535,17 @@ class HeroStage(object):
         self.restore_hall_control()
         self.runtime.apply_saved_appearance()
         self.runtime.hide_map()
+        self.hall.refresh_hints()
         self.runtime.write_status()
 
     def sync_input_mode(self):
         settings = getattr(self.runtime, 'settings', None)
         practice = getattr(self.runtime, 'practice', None)
         in_battle = practice is not None and practice.active and not practice.loading
+        # Hall Tab combat keeps the native city input mode and cursor, and only
+        # unlocks hero casts; the training arena keeps its own battle path.
+        hall_combat = bool(getattr(self, 'hall_combat', False)) and not in_battle
+        fighting = in_battle or hall_combat
         modal = self.visible or self.hall.chat_open or bool(self.runtime.bag is not None and self.runtime.bag.visible)
         modal = modal or bool(settings is not None and settings.ui.visible)
         modal = modal or bool(practice is not None and practice.entry is not None and practice.entry.visible)
@@ -524,7 +553,7 @@ class HeroStage(object):
             modal = modal or practice.toolbar.hero_list.visible or any(
                 getattr(guiManager.instance().elements.get(name), 'visible', False) for name in practice.MODALS)
             modal = modal or getattr(getattr(practice, 'map_dialog', None), 'visible', False)
-        ui_cursor = not in_battle or modal
+        ui_cursor = not fighting or modal
         self.cursor_shown = bool(ui_cursor)
         FsmGame.init().mode = FsmGame.MOD_NOML if modal else (FsmGame.MOD_HERO if in_battle else FsmGame.MOD_CITY)
         FsmGame.set_hero_only_move(ui_cursor)
@@ -634,15 +663,26 @@ class HeroStage(object):
                     BigWorld.callback(0.0, lambda: self.poll_hall_drag(generation))
             else:
                 self.hall_mouse_buttons.discard(key)
-            BigWorld.player().handle_key_event(down, key, mods)
+            if getattr(self, 'hall_combat', False):
+                if down:
+                    self.combat_buttons.add(key)
+                    BigWorld.player().handle_key_event(True, key, mods)
+                elif key in self.combat_buttons:
+                    self.combat_buttons.discard(key)
+                    BigWorld.player().handle_key_event(False, key, mods)
             return True
         from debug import DebugManager
         return DebugManager.instance._offline_original_hall_key(down, key, vk, mods)
 
     def stop_hall_drag(self):
+        combat = bool(getattr(self, 'hall_combat', False))
         for key in self.hall_mouse_buttons:
-            BigWorld.player().handle_key_event(False, key, 0)
+            if combat:
+                BigWorld.player().handle_key_event(False, key, 0)
         self.hall_mouse_buttons.clear()
+        for key in getattr(self, 'combat_buttons', set()):
+            BigWorld.player().handle_key_event(False, key, 0)
+        self.combat_buttons = set()
         self.hall_drag_moved = False
         self.hall_drag_generation += 1
         self.hall_drag_position = None
@@ -795,7 +835,9 @@ class HeroStage(object):
                 self.handle_hall_mouse_key(down, key, vk, mods)
             return True
         if world_release:
-            BigWorld.player().handle_key_event(False, key, mods)
+            if key in getattr(self, 'combat_buttons', set()):
+                self.combat_buttons.discard(key)
+                BigWorld.player().handle_key_event(False, key, mods)
             return True
         if down and key in (keys.KEY_W, keys.KEY_A, keys.KEY_S, keys.KEY_D) and self.hall_world_input():
             self.hall_body_yaw = None
@@ -835,6 +877,24 @@ class HeroStage(object):
             return True
         if practice is not None and practice.engaged:
             return practice.handle_key(down, key, vk, mods)
+        tab_key = getattr(keys, 'KEY_TAB', None)
+        if tab_key is not None and key == tab_key and not mods and not self.visible \
+                and FsmGame.state_is_offline():
+            if down and key not in self.menu_keys_down:
+                self.menu_keys_down.add(key)
+                self.toggle_hall_combat()
+            elif not down:
+                self.menu_keys_down.discard(key)
+            return True
+        if not mods and getattr(self, 'hall_combat', False) and key in self.combat_keys():
+            if down:
+                if key not in self.combat_keys_down:
+                    self.combat_keys_down.add(key)
+                    BigWorld.player().handle_key_event(True, key, mods)
+            elif key in self.combat_keys_down:
+                self.combat_keys_down.discard(key)
+                BigWorld.player().handle_key_event(False, key, mods)
+            return True
         if FsmGame.state_is_offline() and not mods:
             if key == keys.KEY_RETURN and not self.visible:
                 if down and key not in self.menu_keys_down:
@@ -883,6 +943,7 @@ class HeroStage(object):
         self.previous_active_handler(active)
         if not active:
             self.menu_keys_down.clear()
+            getattr(self, 'combat_keys_down', set()).clear()
             practice = getattr(self.runtime, 'practice', None)
             if practice is not None:
                 practice.keys_down.clear()
@@ -918,13 +979,159 @@ class HeroStage(object):
         self.select(hero_type)
 
     def apply_clicked(self, sender):
+        # On the fashion page "source shaping" also commits the focused suit, so
+        # the hall body and the new copy use exactly the look on screen.
+        fashion = self.parts.get('fashion')
+        if self.tab == 'fashion' and fashion is not None:
+            try:
+                fashion.equip_selected(sender)
+            except Exception:
+                self.errors['fashion_shape'] = traceback.format_exc()
+                self.log(self.errors['fashion_shape'])
         self.runtime.apply_hero(self.hero_type)
         self.initialize_player()
+        self.request_source_clone()
         self.runtime.write_status()
 
     def cancel_clicked(self, sender):
         self.runtime.apply_hero(3)
         self.initialize_player()
+
+    def toggle_hall_combat(self, value=None):
+        practice = getattr(self.runtime, 'practice', None)
+        if self.visible or self.hall.chat_open or self.closed:
+            return False
+        if practice is not None and practice.engaged:
+            return False
+        current = bool(getattr(self, 'hall_combat', False))
+        self.hall_combat = (not current) if value is None else bool(value)
+        self.sync_input_mode()
+        self.hall.refresh_hints()
+        self.log('Hall combat mode: '+str(self.hall_combat))
+        self.runtime.write_status()
+        return True
+
+    def combat_keys(self):
+        if self.combat_key_cache is None:
+            mapping = getattr(getattr(BigWorld.player(), 'skill_controller', None), 'key_skill_map', None) or {}
+            self.combat_key_cache = set(getattr(keys, name, None) for name in mapping)
+            self.combat_key_cache.discard(None)
+            # Movement stays on the native FSM path in both hall states.
+            for name in ('KEY_W', 'KEY_A', 'KEY_S', 'KEY_D'):
+                self.combat_key_cache.discard(getattr(keys, name, None))
+        return self.combat_key_cache
+
+    def request_source_clone(self):
+        self.source_clone_pending = int(getattr(self, 'source_clone_pending', 0) or 0)+1
+        self.source_clone_attempts = 0
+        BigWorld.callback(0.2, self.try_source_clone)
+
+    def try_source_clone(self):
+        if self.closed or not getattr(self, 'source_clone_pending', 0):
+            return
+        hero_type = int(self.hero_type)
+        player = BigWorld.player()
+        model = getattr(player, 'model', None) if player is not None else None
+        current = int(getattr(player, 'hero_type', 0) or 0) if player is not None else 0
+        try:
+            model_id = int(getattr(player, 'model_id', 0) or 0)
+        except (TypeError, ValueError):
+            model_id = 0
+        if model is not None and current == hero_type and model_id == hero_type:
+            self.source_clone_pending -= 1
+            self.source_clone_attempts = 0
+            self.spawn_source_clone()
+            if self.source_clone_pending:
+                BigWorld.callback(0.15, self.try_source_clone)
+            return
+        if self.source_clone_attempts >= 12:
+            self.source_clone_pending = 0
+            self.log('Source clone skipped: hall model stayed on another hero')
+            return
+        self.source_clone_attempts += 1
+        BigWorld.callback(0.25, self.try_source_clone)
+
+    def spawn_source_clone(self):
+        self.maintain_source_clones()
+        if len(self.source_clones) >= self.CLONE_LIMIT:
+            self.log('Source clone limit reached: '+str(self.CLONE_LIMIT))
+            self.hall.refresh_hints()
+            return None
+        player = BigWorld.player()
+        hero_type = int(player.hero_type)
+        offset = source_clone_offset(player.model.yaw, self.source_clone_serial)
+        position = (player.position.x+offset[0], player.position.y+0.02, player.position.z+offset[1])
+        try:
+            from debug import DebugManager
+            created = DebugManager.instance.create_target(1, 'PracticeAIHero', 60000, hero_type,
+                position, self.runtime.fashions_for(hero_type))
+            entity = created[0]
+            model = getattr(entity, 'model', None)
+            if model is not None:
+                model.yaw = player.model.yaw
+                if hasattr(model, 'bh'):
+                    model.bh.bh_yaw = player.model.yaw
+            try:
+                entity.camp = int(player.camp)
+            except Exception:
+                pass
+            self.source_clones.append(entity.id)
+            self.source_clone_serial += 1
+            self.log('Source clone created: '+repr({'id':entity.id, 'hero':hero_type,
+                                                    'count':len(self.source_clones)}))
+        except Exception:
+            self.errors['clone'] = traceback.format_exc()
+            self.log(self.errors['clone'])
+            return None
+        self.hall.refresh_hints()
+        self.runtime.write_status()
+        return entity.id
+
+    def maintain_source_clones(self):
+        clones = getattr(self, 'source_clones', None)
+        if clones is None:
+            return
+        alive = []
+        for entity_id in clones:
+            entity = BigWorld.entity(entity_id)
+            if entity is None:
+                continue
+            alive.append(entity_id)
+            try:
+                # Copies are decoration; combat cannot remove or damage them.
+                if entity.hp < entity.mhp:
+                    entity.hp = entity.mhp
+                    entity.set_hp(0)
+            except Exception:
+                pass
+        if len(alive) != len(clones):
+            self.source_clones = alive
+            self.hall.refresh_hints()
+
+    def hint_lines(self):
+        practice = getattr(self.runtime, 'practice', None)
+        if practice is not None and (practice.active or practice.loading):
+            return []
+        combat = bool(getattr(self, 'hall_combat', False))
+        if combat:
+            lines = [u'\u5927\u5385\u00b7\u6218\u6597\u72b6\u6001\uff08Tab \u8fd4\u56de\u975e\u6218\u6597\uff09',
+                     u'\u5de6\u952e\u7a7a\u767d\u5904\u666e\u653b\uff0cQ/E/R/F/C \u91ca\u653e\u6280\u80fd',
+                     u'WASD \u79fb\u52a8\uff0c\u6eda\u8f6e\u62c9\u8fd1\u62c9\u8fdc',
+                     u'\u5de6\u952e\u62d6\u52a8\u89c6\u89d2\uff0c\u53f3\u952e\u62d6\u52a8\u540c\u65f6\u8f6c\u5411']
+        else:
+            lines = [u'\u5927\u5385\u00b7\u975e\u6218\u6597\u72b6\u6001\uff08Tab \u8fdb\u5165\u6218\u6597\uff09',
+                     u'WASD \u79fb\u52a8\uff0c\u6eda\u8f6e\u62c9\u8fd1\u62c9\u8fdc',
+                     u'\u5de6\u952e\u62d6\u52a8\u89c6\u89d2\uff0c\u53f3\u952e\u62d6\u52a8\u540c\u65f6\u8f6c\u5411',
+                     u'\u754c\u9762\u6309\u94ae\u4f18\u5148\uff0c\u6b64\u65f6\u4e0d\u4f1a\u91ca\u653e\u6280\u80fd']
+        lines.append(u'\u56de\u8f66 \u804a\u5929\uff0cZ \u82f1\u96c4\uff0cX \u65f6\u88c5\uff0cC \u8bed\u97f3\uff0cV \u6545\u4e8b')
+        lines.append(u'B \u80cc\u5305\uff0cEsc \u9000\u51fa\u786e\u8ba4')
+        lines.append(u'\u82f1\u96c4/\u65f6\u88c5\u9875\u70b9\u201c\u6e90\u529b\u5851\u5f62\u201d\u5728\u811a\u4e0b\u751f\u6210\u590d\u5236\u4f53')
+        if self.hall.chat_open:
+            lines.append(u'\u804a\u5929\u8f93\u5165\u4e2d\uff1a\u56de\u8f66\u6216 Esc \u6536\u8d77\uff08\u79bb\u7ebf\u4e0d\u53d1\u9001\uff09')
+        else:
+            lines.append(u'\u6e90\u529b\u590d\u5236\u4f53 %d/%d\uff0c\u53ef\u53cd\u590d\u751f\u6210\uff0c\u4e92\u4e0d\u5f71\u54cd' % (
+                len(self.source_clones), self.CLONE_LIMIT))
+        return lines
 
     def exit_clicked(self, sender):
         self.hide()
@@ -944,6 +1151,7 @@ class HeroStage(object):
         if self.closed:
             return
         self.runtime.hide_map()
+        self.maintain_source_clones()
         practice = getattr(self.runtime, 'practice', None)
         if practice is None or not practice.active:
             aim = getattr(BigWorld.player(), 'aim', None)
@@ -1011,6 +1219,9 @@ class HeroStage(object):
         result['camera_yaw'] = BigWorld.dcursor().yaw
         result['appearance_updates'] = self.runtime.appearance_updates
         result['chat_open'] = self.hall.chat_open
+        result['hall_combat'] = bool(getattr(self, 'hall_combat', False))
+        result['source_clones'] = len(getattr(self, 'source_clones', ()))
+        result['hint_lines'] = [line.decode('gbk', 'replace') for line in getattr(self.hall, 'hints', ())][:9]
         result['visible_hero_count'] = len(self.selector.part_basic.hero_list.use_heros)
         result['content_counts'] = {}
         if 'fashion' in self.parts:

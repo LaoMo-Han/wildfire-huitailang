@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 SOURCE = Path(__file__).resolve().parent.parent/'runtime/hero_stage.py'
 METHODS = {'handle_menu_key_impl', 'handle_hall_mouse_key', 'stop_hall_drag',
            'poll_hall_drag', 'update_hall_drag', 'rotate_hall_view', 'handle_world_mouse',
-           'sync_input_mode', 'handle_world_key', 'handle_app_active', 'finish_focus_restore'}
+           'sync_input_mode', 'handle_world_key', 'handle_app_active', 'finish_focus_restore',
+           'toggle_hall_combat', 'combat_keys'}
 tree = ast.parse(SOURCE.read_text(encoding='utf-8'))
 original = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'HeroStage')
 subset = ast.Module(body=[ast.ClassDef(name='Pointer', bases=[], keywords=[],
@@ -26,24 +27,39 @@ class PointerTests(unittest.TestCase):
         self.cursor = NS(yaw=0., pitch=0., minPitch=-1.5, maxPitch=1.5,
                          mouseSensitivity=.003, invertVerticalMovement=False)
         self.player = NS(model=NS(yaw=.4, bh=NS(bh_yaw=.4, yaw_enable=True)), handle_key_event=Mock())
-        self.keys = NS(KEY_LEFTMOUSE=256, KEY_RIGHTMOUSE=257)
+        self.keys = NS(KEY_LEFTMOUSE=256, KEY_RIGHTMOUSE=257, KEY_TAB=15,
+                       KEY_W=87, KEY_A=65, KEY_S=83, KEY_D=68,
+                       KEY_LCONTROL=17, KEY_RCONTROL=18, KEY_ESCAPE=27, KEY_RETURN=13,
+                       KEY_Z=90, KEY_X=88, KEY_C=67, KEY_V=86, KEY_B=66)
         self.bw = NS(getCursorPos=lambda: tuple(self.position),
                      callback=lambda delay, fn: self.callbacks.append(fn),
                      player=lambda: self.player, dcursor=lambda: self.cursor,
                      sendMouseMovementToScript=Mock())
-        self.fsm = NS(active=True, _offline_original_world_mouse=Mock(return_value=False))
-        namespace = {'BigWorld': self.bw, 'keys': self.keys,
-                     'FsmGame': NS(init=lambda: self.fsm)}
+        self.fsm = NS(active=True, _offline_original_world_mouse=Mock(return_value=False),
+                      state_is_offline=Mock(return_value=True))
+        self.fsm_module = NS(init=lambda: self.fsm, state_is_offline=Mock(return_value=True),
+                             set_hero_only_move=Mock(), MOD_NOML=0, MOD_CITY=2, MOD_HERO=1)
+        namespace = {'BigWorld': self.bw, 'keys': self.keys, 'FsmGame': self.fsm_module,
+                     'SysBox': NS(instance=lambda: NS(show_array=[]))}
         exec(compile(subset, str(SOURCE), 'exec'), namespace)
         self.stage = namespace['Pointer']()
         self.stage.menu_keys_down = set()
         self.stage.hall_mouse_buttons = set()
+        self.stage.combat_buttons = set()
+        self.stage.combat_keys_down = set()
         self.stage.hall_drag_moved = False
         self.stage.hall_drag_position = None
         self.stage.hall_drag_generation = 0
         self.stage.hall_body_yaw = None
         self.stage.hall_world_input = lambda: True
-        self.stage.runtime = NS(practice=None, settings=None)
+        self.stage.hall = NS(chat_open=False, refresh_hints=Mock())
+        self.stage.closed = False
+        self.stage.visible = False
+        self.stage.preview_drag = False
+        self.stage.hall_combat = False
+        self.stage.log = Mock()
+        self.stage.sync_input_mode = Mock()
+        self.stage.runtime = NS(practice=None, settings=None, bag=None, write_status=Mock())
         self.ui = NS(handleKeyEvent=Mock(return_value=False))
         self.gui = NS(handleKeyEvent=Mock(return_value=False))
         self.modules = patch.dict(sys.modules, {'C_ui': self.ui, 'GUI': self.gui})
@@ -82,10 +98,50 @@ class PointerTests(unittest.TestCase):
         self.key(False)
         self.assertEqual(self.cursor.yaw, 0.)
         self.assertEqual(self.player.model.bh.bh_yaw, .4)
+        self.player.handle_key_event.assert_not_called()
+
+    def test_hall_combat_click_reaches_hero_skills(self):
+        self.stage.hall_combat = True
+        self.key(True)
+        self.key(False)
         self.assertEqual([call.args for call in self.player.handle_key_event.call_args_list],
                          [(True, 256, 0), (False, 256, 0)])
 
-    def test_world_release_reaches_player_even_if_ui_consumes_release(self):
+    def test_hall_combat_tab_returns_to_peacetime(self):
+        self.stage.hall_combat = True
+        self.assertTrue(self.key(True, 15))
+        self.assertTrue(self.key(False, 15))
+        self.assertFalse(self.stage.hall_combat)
+        self.stage.sync_input_mode.assert_called_once()
+        self.stage.hall.refresh_hints.assert_called()
+
+    def test_tab_starts_combat_only_once_per_press(self):
+        self.assertTrue(self.key(True, 15))
+        self.assertTrue(self.stage.hall_combat)
+        self.key(True, 15)
+        self.assertTrue(self.stage.hall_combat)
+        self.key(False, 15)
+        self.assertTrue(self.key(True, 15))
+        self.assertFalse(self.stage.hall_combat)
+
+    def test_combat_skill_key_reaches_hero_once(self):
+        self.stage.hall_combat = True
+        stage = self.stage
+        stage.combat_key_cache = set([30])
+        self.assertTrue(self.key(True, 30))
+        self.assertTrue(self.key(False, 30))
+        self.assertEqual([call.args for call in self.player.handle_key_event.call_args_list],
+                         [(True, 30, 0), (False, 30, 0)])
+
+    def test_peacetime_skill_key_stays_with_native_listener(self):
+        native = Mock(return_value=False)
+        self.stage.previous_key_listener = native
+        self.key(True, 30)
+        native.assert_called_once()
+        self.player.handle_key_event.assert_not_called()
+
+    def test_world_release_reaches_player_once_when_ui_consumes_release(self):
+        self.stage.hall_combat = True
         self.key(True)
         self.ui.handleKeyEvent.return_value = True
         self.key(False)
@@ -175,6 +231,8 @@ class PointerTests(unittest.TestCase):
         self.stage.visible = True
         self.stage.hall = NS(chat_open=False)
         self.stage.runtime.bag = None
+        self.stage.sync_input_mode = type(self.stage).sync_input_mode.__get__(
+            self.stage, type(self.stage))
         fsm_module = self.stage.sync_input_mode.__globals__['FsmGame']
         fsm_module.MOD_NOML, fsm_module.MOD_CITY, fsm_module.MOD_HERO = 0, 2, 1
         fsm_module.set_hero_only_move = Mock()

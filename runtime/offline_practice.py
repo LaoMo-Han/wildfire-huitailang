@@ -9,6 +9,11 @@ from helper import ClientUtils, PracticeRoomHelper
 from logic import FsmGame
 
 
+def cooldown_button_position(map_button, gap=4):
+    """The no-cooldown switch sits directly right of the map selector."""
+    return (map_button.coord[0]+map_button.width+gap, map_button.coord[1])
+
+
 class LocalEntry(PracticeEntry):
     def __init__(self, owner):
         self.owner = owner
@@ -156,6 +161,9 @@ class LocalPractice(object):
             self.entry.visible = False
         self.runtime.close_bag()
         self.runtime.hall.close_chat()
+        stage = self.runtime.hall.hero_page
+        if hasattr(stage, 'hall_combat'):
+            stage.hall_combat = False
         self.saved_gui = dict((name, bool(part.visible)) for name, part in guiManager.instance().elements.items()
                               if hasattr(part, 'visible'))
         for part in self.runtime.hall.parts.values():
@@ -447,9 +455,17 @@ class LocalPractice(object):
                 rc.COMMON_BTN_RECT_BIG, u'\u9009\u62e9\u5730\u56fe'.encode('gbk'))
         self.map_button.event_click = lambda sender: self.toggle_maps()
         if not hasattr(self, 'cooldown_button'):
-            first = self.toolbar.btn_show_hint
-            self.cooldown_button = xnui.XButton(self.toolbar, first.coord[0], first.coord[1]+first.height+4,
-                rc.COMMON_BTN_RECT_BIG, '')
+            # Placed directly right of "选择地图", still on the native top bar.
+            x, y = cooldown_button_position(self.map_button)
+            self.cooldown_button = xnui.XButton(self.toolbar, x, y, rc.COMMON_BTN_RECT_BIG, '')
+        else:
+            self.cooldown_button.set_coord(*cooldown_button_position(self.map_button))
+        if not getattr(self, '_toolbar_shifted', False):
+            # The native bar was right-aligned for exactly one extra button, so
+            # shift it left by one slot to keep both custom buttons on screen.
+            self.toolbar.coord = (self.toolbar.coord[0]-(self.cooldown_button.width+4),
+                                  self.toolbar.coord[1])
+            self._toolbar_shifted = True
         self.cooldown_button.event_click = lambda sender: self.toolbar_action('no_cooldown')
         self.update_cooldown_button()
 
@@ -954,6 +970,7 @@ class LocalPractice(object):
         self.set_map_enabled(False)
         self.runtime.hall.hero_page.hall_pitch, self.runtime.hall.hero_page.hall_yaw = self.return_camera
         self.runtime.hall.hero_page.restore_hall_control()
+        self.runtime.hall.refresh_hints()
         self.runtime.apply_saved_appearance(True)
         self.runtime.write_status()
 

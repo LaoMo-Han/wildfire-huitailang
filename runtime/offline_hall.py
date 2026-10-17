@@ -31,6 +31,16 @@ class LocalNavigation(OriginalMenuBar):
 
 
 class OfflineHall(object):
+    # The native city chat lives at the bottom-left corner. Local operation
+    # hints occupy the rows directly above its input box, so they read as part
+    # of the chat window instead of covering the 3D view.
+    HINT_ROWS = 9
+    HINT_X = 96
+    # The opened chat log covers the left half, so hints move right of it.
+    HINT_X_CHAT = 540
+    HINT_BOTTOM = 160
+    HINT_STEP = 16
+
     def __init__(self, heroes, log):
         self.heroes = heroes
         self.log = log
@@ -38,6 +48,8 @@ class OfflineHall(object):
         self.errors = {}
         self.buttons = []
         self.chat_open = False
+        self.hint_labels = []
+        self.hints = []
         # The guide is a separately registered native HUD, outside our parts.
         guide = guiManager.get_ui('freshman_side_bar')
         if not hasattr(guide, '_offline_original_set_visible'):
@@ -115,6 +127,45 @@ class OfflineHall(object):
         chat.chat_edit.event_active_changed = self.chat_focus_changed
         chat.btn_send.event_click = self.notice
         chat.btn_channel.event_click = self.notice
+        self.build_hints(chat)
+
+    def build_hints(self, chat):
+        labels = []
+        for index in range(self.HINT_ROWS):
+            x, y = self.hint_coord(index, False)
+            labels.append(xnui.XLabel(chat, x, y, gb(''), font.TEXT_12, color.WHITE))
+        self.hint_labels = labels
+        self.hints = [gb('')]*len(labels)
+
+    def hint_coord(self, index, expanded):
+        y = self.HINT_BOTTOM-(self.HINT_ROWS-1-index)*self.HINT_STEP
+        return (self.HINT_X_CHAT if expanded else self.HINT_X, y)
+
+    def set_hint_layout(self, expanded):
+        for index, label in enumerate(getattr(self, 'hint_labels', ())):
+            label.set_coord(*self.hint_coord(index, expanded))
+
+    def set_hints(self, lines):
+        labels = getattr(self, 'hint_labels', ())
+        if not labels:
+            return
+        texts = [gb(line) for line in list(lines)[:len(labels)]]
+        texts += [gb('')]*(len(labels)-len(texts))
+        if texts == getattr(self, 'hints', None):
+            return
+        self.hints = texts
+        for label, value in zip(labels, texts):
+            label.text = value
+
+    def refresh_hints(self):
+        page = getattr(self, 'hero_page', None)
+        if page is None or not hasattr(page, 'hint_lines'):
+            return
+        try:
+            self.set_hints(page.hint_lines())
+        except Exception:
+            self.errors['hints'] = traceback.format_exc()
+            self.log(self.errors['hints'])
 
     def open_chat(self):
         if self.chat_open:
@@ -131,6 +182,8 @@ class OfflineHall(object):
         FsmGame.init().mode = FsmGame.MOD_NOML
         self.chat_panel.chat_edit.active = True
         self.hero_page.cursor_shown = True
+        self.set_hint_layout(True)
+        self.refresh_hints()
 
     def close_chat(self):
         if not self.chat_open:
@@ -141,6 +194,8 @@ class OfflineHall(object):
             getattr(self.chat_panel, name).visible = False
         self.chat_panel.visible = getattr(self, 'chat_return_visible', True)
         self.hero_page.sync_input_mode()
+        self.set_hint_layout(False)
+        self.refresh_hints()
 
     def chat_focus_changed(self, sender):
         if self.chat_panel.chat_edit.active and not self.chat_open:
@@ -193,4 +248,5 @@ def install(heroes, log):
         hall.errors['hero_page'] = traceback.format_exc()
         log(hall.errors['hero_page'])
     FsmGame.init().mode = FsmGame.MOD_HERO
+    hall.refresh_hints()
     return hall

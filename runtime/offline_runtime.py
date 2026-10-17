@@ -46,6 +46,9 @@ class LocalRuntime(object):
         context = {}
         execfile('../res/editor/client/offline_practice.py', context)
         self.practice = context['install'](self)
+        context = {}
+        execfile('../res/editor/client/offline_compat.py', context)
+        self.compatibility = context['install'](self)
         BigWorld.enablePlayerFade(False)
         context = {}
         execfile('../res/editor/client/offline_settings.py', context)
@@ -80,12 +83,18 @@ class LocalRuntime(object):
         if player is None or getattr(player, 'model', None) is None:
             BigWorld.callback(0.5, self.place_in_hall)
             return
-        # The original zc_new01 minimap is centred at world X/Z (52, 178).
-        player.physics.teleport((52.0, 229.0, 178.0), (0.0, 0.0, 0.0))
+        if ClientUtils.get_scene_name() != 'zc_new01':
+            return
+        context = {}
+        execfile('../res/editor/client/offline_spawn.py', context)
+        point = context['place'](player)
+        if point is None:
+            BigWorld.callback(0.1, self.place_in_hall)
+            return
         self.hall.hero_page.hall_pitch = 0.0
         self.hall.hero_page.hall_yaw = 0.0
         self.hall.hero_page.restore_hall_control()
-        self.log('Offline player placed at central hall: '+repr(tuple(player.position)))
+        self.log('Offline player placed on hall ground: '+repr(point))
 
     def hide_map(self):
         if self.practice is not None and self.practice.active:
@@ -122,6 +131,8 @@ class LocalRuntime(object):
         hero_type = int(hero_type)
         if hero_type not in self.hero_ids:
             raise ValueError('Hero is not present in this client')
+        if self.practice is not None and hasattr(self.practice, 'combat'):
+            self.practice.combat.clear()
         manager = PracticeRoomHelper.instance()
         manager.putting_ally = False
         manager.change_attacker(hero_type)
@@ -141,6 +152,8 @@ class LocalRuntime(object):
         if getattr(player, 'model_id', None) != hero_type:
             BigWorld.callback(0.5, lambda: self.apply_saved_appearance(force))
             return
+        if self.practice is not None and self.practice.active and not self.practice.loading:
+            player.aim.active()
         appearance = self.profile.get('appearance', {}).get(str(hero_type), {})
         fashion_id = int(appearance.get('fashion', self.profile.get('fashion', {}).get(str(hero_type), 0)) or 0)
         dye_id = int(appearance.get('dye') or 0)
@@ -186,6 +199,7 @@ class LocalRuntime(object):
                                  'current_version':self.updates.data.get('current_version')},
                       'scene_preload':self.scene_preload,
                       'practice':self.practice.status() if self.practice is not None else None,
+                      'compatibility':self.compatibility.status(),
                       'bag':{'visible':bool(self.bag.visible),
                              'item_count':sum(len(x) for x in self.bag.items.values()),
                              'categories':dict((str(k), len(v)) for k, v in self.bag.items.items()),
@@ -246,6 +260,11 @@ class LocalRuntime(object):
 
 def install(log):
     global controller
+    # The optional appearance package is local and absent from normal releases.
+    if os.path.isfile('../res/editor/client/saber_mod.py'):
+        context = {}
+        execfile('../res/editor/client/saber_mod.py', context)
+        context['install'](log)
     controller = LocalRuntime(log)
     controller.write_status()
     return controller

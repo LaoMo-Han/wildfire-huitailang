@@ -19,7 +19,7 @@ sealed class OfflineLauncher : NativeWindow
     private string readyStage;
     private bool restart;
     private volatile bool cancelDownload;
-    private DateTime nextCheck=DateTime.MinValue;
+    private bool startupCheckStarted;
     private readonly object statusLock=new object();
     private OfflineLauncher(string root)
     {
@@ -41,7 +41,8 @@ sealed class OfflineLauncher : NativeWindow
         timer = new System.Windows.Forms.Timer();
         timer.Interval = 500;
         timer.Tick += delegate {
-            PollUpdates();
+            // Update status/transport failures must never interrupt the game loop.
+            try { PollUpdates(); } catch (Exception) { }
             if (client.HasExited) {
                 if(readyStage!=null)StartInstaller();
                 timer.Stop();
@@ -62,12 +63,12 @@ sealed class OfflineLauncher : NativeWindow
         if(changed)UpdateCore.Atomic(path,doc.OuterXml);
     }
 
-    private void Status(string state,string message,int progress=0){lock(statusLock){try{var installed=UpdateCore.Installed(root);UpdateCore.Atomic(Path.Combine(root,"game","update_status.json"),UpdateCore.Serializer().Serialize(new {request_id=requestId,state=state,message=message,progress=progress,current_version=installed.version,version=available==null?installed.version:available.version,notes=available==null?"":available.notes}));}catch(IOException){}catch(UnauthorizedAccessException){}}}
+    private void Status(string state,string message,int progress=0){lock(statusLock){try{var installed=UpdateCore.Installed(root);UpdateCore.Atomic(Path.Combine(root,"game","update_status.json"),UpdateCore.Serializer().Serialize(new {request_id=requestId,state=state,message=message,progress=progress,current_version=installed.version,version=available==null?installed.version:available.version,notes=available==null?"":available.notes}));}catch(Exception){}}}
     private void Background(Action action){if(Interlocked.CompareExchange(ref busy,1,0)!=0)return;ThreadPool.QueueUserWorkItem(delegate{try{action();}catch(Exception error){Status("error","暂时无法更新，仍可玩旧版："+error.Message);}finally{Interlocked.Exchange(ref busy,0);}});}
     private void Check(){Status("checking","正在检查更新");var m=UpdateCore.Fetch();if(m.build>UpdateCore.Installed(root).build){available=m;Status("available","有新版本，点击下载更新");}else{available=null;Status("current","已经是最新版本");}}
     private void Download(){cancelDownload=false;if(available==null)Check();if(available==null)return;readyStage=UpdateCore.Prepare(root,available,(component,p)=>{if(cancelDownload)throw new OperationCanceledException("下载已取消");Status("downloading","正在下载 "+component,p);});Status("ready","下载完成，退出游戏后安装");}
     private void PollUpdates(){
-        if(DateTime.UtcNow>=nextCheck&&readyStage==null){nextCheck=DateTime.UtcNow.AddMinutes(5);Background(Check);}
+        if(!startupCheckStarted){startupCheckStarted=true;Background(Check);}
         try{var r=UpdateCore.Read<Dictionary<string,object>>(Path.Combine(root,"game","update_request.json"));var id=r["id"].ToString();if(id==requestId)return;requestId=id;var action=r["action"].ToString();
             if(action=="check")Background(Check);
             else if(action=="download")Background(Download);

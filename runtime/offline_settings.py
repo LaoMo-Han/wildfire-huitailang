@@ -11,12 +11,31 @@ class LocalSettings(object):
     def __init__(self, runtime):
         self.runtime = runtime
         self.ui = guiManager.get_ui('sys_menu')
+        self.original_set_visible = self.ui.set_visible
+        self.ui.set_visible = self.set_visible
         self.setting = None
         value = runtime.profile.get('fps_limit', 80)
         self.limit = value if value in FPS_LIMITS else 80
         BigWorld.limitForegroundFPS(self.limit)
         # SysMenu initialises all native settings in its next-frame callback.
         BigWorld.callback(0.2, self.bind)
+
+    def set_visible(self, value):
+        position = BigWorld.getCursorPos() if not value else None
+        result = self.original_set_visible(value)
+        # Finish the native visibility/mode callbacks before restoring the
+        # offline page's input policy. Keep native Apply and Cancel intact.
+        BigWorld.callback(0.0, lambda: self.restore_page_input(position))
+        return result
+
+    def restore_page_input(self, position=None):
+        stage = self.runtime.hall.hero_page
+        if not stage.closed:
+            stage.sync_input_mode()
+            if position is not None and stage.cursor_shown:
+                import C_ui
+                C_ui.cursor_pos(*position)
+                C_ui.set_cursor_pos(*position)
 
     def bind(self):
         setting = AppSetting.get_setting('LimitFpsSetting')

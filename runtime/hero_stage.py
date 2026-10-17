@@ -289,7 +289,7 @@ class HeroStage(object):
         self.preview_linked = None
         self.catalog_initialized = False
         self.menu_keys_down = set()
-        self.cursor_shown = False
+        self.cursor_shown = True
         self.previous_camera_mouse = camera.bc.handle_mouse_event
         self.camera_mouse_handler = self.handle_camera_mouse
         camera.bc.handle_mouse_event = self.camera_mouse_handler
@@ -297,6 +297,7 @@ class HeroStage(object):
         self.hall_pitch = 0.0
         self.hall_yaw = 0.0
         self.control_restore_pending = False
+        self.install_view_controls()
         self.field = LocalActorField('HeroEquips')
         self.city = CityManager.instance
         if self.city is None:
@@ -453,6 +454,7 @@ class HeroStage(object):
             self.parts[self.tab].on_hero_select(self.hero_type)
 
     def show(self, name=None):
+        self.stop_hall_drag()
         if name is not None:
             self.tab = name
         if self.visible:
@@ -484,6 +486,8 @@ class HeroStage(object):
         self.runtime.write_status()
 
     def hide(self):
+        self.preview_drag = False
+        BigWorld.sendMouseMovementToScript(False)
         self.selector.visible = False
         for part in self.parts.values():
             part.visible = False
@@ -509,38 +513,183 @@ class HeroStage(object):
         self.runtime.hide_map()
         self.runtime.write_status()
 
-    def restore_hall_control(self):
-        # ActorField's original leave callback only resumes PlayerAvatar.
-        # The built-in offline state uses PlayerHero and needs the same resume.
-        self.control_restore_pending = True
-        self.resume_hall_behavior()
-        ui_cursor = self.cursor_shown or bool(self.runtime.bag is not None and self.runtime.bag.visible) or self.hall.chat_open
+    def sync_input_mode(self):
+        settings = getattr(self.runtime, 'settings', None)
         practice = getattr(self.runtime, 'practice', None)
         in_battle = practice is not None and practice.active and not practice.loading
+        modal = self.visible or self.hall.chat_open or bool(self.runtime.bag is not None and self.runtime.bag.visible)
+        modal = modal or bool(settings is not None and settings.ui.visible)
+        modal = modal or bool(practice is not None and practice.entry is not None and practice.entry.visible)
         if in_battle:
-            ui_cursor = ui_cursor or practice.toolbar.hero_list.visible or any(
+            modal = modal or practice.toolbar.hero_list.visible or any(
                 getattr(guiManager.instance().elements.get(name), 'visible', False) for name in practice.MODALS)
-            ui_cursor = ui_cursor or getattr(getattr(practice, 'map_dialog', None), 'visible', False)
-        FsmGame.init().mode = FsmGame.MOD_NOML if ui_cursor else FsmGame.MOD_HERO
+            modal = modal or getattr(getattr(practice, 'map_dialog', None), 'visible', False)
+        ui_cursor = not in_battle or modal
+        self.cursor_shown = bool(ui_cursor)
+        FsmGame.init().mode = FsmGame.MOD_NOML if modal else (FsmGame.MOD_HERO if in_battle else FsmGame.MOD_CITY)
         FsmGame.set_hero_only_move(ui_cursor)
+        if ui_cursor:
+            # Native settings can return to combat mode when closed, leaving
+            # the UI cursor at its hidden sentinel even on the hero page.
+            import C_ui
+            if C_ui.get_cursor_pos() == (-20000, -20000):
+                C_ui.cursor_pos(*BigWorld.getCursorPos())
         BigWorld.player().move_only = ui_cursor or not in_battle
+        return in_battle
+
+    def restore_hall_control(self):
+        # Restore camera ownership only at scene/page transitions, not clicks.
+        self.control_restore_pending = True
+        self.resume_hall_behavior()
+        in_battle = self.sync_input_mode()
         camera.tryReleaseDC(FsmGame.init())
         if camera.inst.current is not camera.bc:
             camera.bc()
         camera.bc.setTarget()
+        if not in_battle:
+            camera.camera_bind_player(False)
+            body_yaw = getattr(self, 'hall_body_yaw', None)
+            BigWorld.player().model.bh.yaw_enable = body_yaw is None
+            if body_yaw is not None:
+                BigWorld.player().model.yaw = body_yaw
+                BigWorld.player().model.bh.bh_yaw = body_yaw
+        else:
+            BigWorld.player().model.bh.yaw_enable = True
         camera.bc.bw_cam.pivotMaxDist = self.hall_camera_distance
         # Normalised pitch remaps the old narrow range when limits change,
         # which can push the camera upwards on every return/focus change.
         BigWorld.dcursor().keepNormalizedPitch = False
         BigWorld.dcursor().minPitch = -1.569
         BigWorld.dcursor().maxPitch = 1.569
+        BigWorld.dcursor().lookSpring = False
+        BigWorld.dcursor().lookSpringOnMove = False
         BigWorld.dcursor().pitch = self.hall_pitch
         BigWorld.dcursor().yaw = self.hall_yaw
         BigWorld.enablePlayerFade(False)
         FsmGame.init().reset_mouse_state()
+        if in_battle and hasattr(BigWorld.player(), 'aim'):
+            # Changing heroes can replace Aim without activating a new camera.
+            # Rebind its native pitch/depth matrix even when bc stayed current.
+            BigWorld.player().aim.active()
+        elif hasattr(BigWorld.player(), 'aim'):
+            BigWorld.player().aim.enabled(False)
+
+    def install_view_controls(self):
+        from debug import DebugManager
+        manager = DebugManager.instance
+        if not hasattr(manager, '_offline_original_preview_mouse'):
+            manager._offline_original_preview_mouse = manager.handle_mouse_event
+        self.preview_drag = False
+        self.hall_mouse_buttons = set()
+        self.hall_drag_moved = False
+        self.hall_drag_generation = getattr(self, 'hall_drag_generation', 0)+1
+        self.hall_drag_position = None
+        self.hall_body_yaw = getattr(self, 'hall_body_yaw', None)
+        if not hasattr(manager, '_offline_original_hall_key'):
+            manager._offline_original_hall_key = manager.handle_key_event
+        self.hall_key_handler = self.handle_hall_mouse_key
+        manager.handle_key_event = self.hall_key_handler
+        fsm = FsmGame.init()
+        if not hasattr(fsm, '_offline_original_world_mouse'):
+            fsm._offline_original_world_mouse = fsm.handle_mouse_event
+        self.world_mouse_handler = self.handle_world_mouse
+        fsm.handle_mouse_event = self.world_mouse_handler
+        self.offline_mouse_handler = self.handle_preview_mouse
+        manager.handle_mouse_event = self.offline_mouse_handler
+
+    def handle_preview_mouse(self, dx, dy, dz):
+        if self.visible and self.field.isin and self.preview_drag:
+            self.field.handle_mouse(dx, dy, 0)
+            return not dz
+        from debug import DebugManager
+        return DebugManager.instance._offline_original_preview_mouse(dx, dy, dz)
+
+    def hall_world_input(self):
+        practice = getattr(self.runtime, 'practice', None)
+        return (not self.visible and not self.hall.chat_open
+            and not (practice is not None and practice.engaged)
+            and not (self.runtime.bag is not None and self.runtime.bag.visible)
+            and not getattr(getattr(getattr(self.runtime, 'settings', None), 'ui', None), 'visible', False)
+            and not SysBox.instance().show_array)
+
+    def handle_hall_mouse_key(self, down, key, vk, mods):
+        # Only start a world drag after the native widgets decline the press.
+        if key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE) and self.hall_world_input():
+            if down:
+                starting = not self.hall_mouse_buttons
+                self.hall_mouse_buttons.add(key)
+                if starting:
+                    self.hall_drag_position = BigWorld.getCursorPos()
+                    self.hall_drag_generation += 1
+                    generation = self.hall_drag_generation
+                    BigWorld.callback(0.0, lambda: self.poll_hall_drag(generation))
+            else:
+                self.hall_mouse_buttons.discard(key)
+            return True
+        from debug import DebugManager
+        return DebugManager.instance._offline_original_hall_key(down, key, vk, mods)
+
+    def stop_hall_drag(self):
+        self.hall_mouse_buttons.clear()
+        self.hall_drag_moved = False
+        self.hall_drag_generation += 1
+        self.hall_drag_position = None
+
+    def poll_hall_drag(self, generation):
+        if generation != self.hall_drag_generation or not self.hall_mouse_buttons:
+            return
+        if not self.hall_world_input() or not FsmGame.init().active:
+            self.stop_hall_drag()
+            return
+        self.update_hall_drag()
+        BigWorld.callback(1.0/60.0, lambda: self.poll_hall_drag(generation))
+
+    def update_hall_drag(self):
+        # With the visible native cursor the engine can withhold relative mouse
+        # events. Read client coordinates instead, without moving the cursor or
+        # changing its capture mode on button presses.
+        position = BigWorld.getCursorPos()
+        previous = self.hall_drag_position
+        self.hall_drag_position = position
+        if previous is not None:
+            self.rotate_hall_view(position[0]-previous[0], position[1]-previous[1])
+
+    def handle_world_mouse(self, dx, dy, dz):
+        if self.hall_mouse_buttons and self.hall_world_input() and FsmGame.init().active:
+            self.update_hall_drag()
+            if dz:
+                self.handle_camera_mouse(0, 0, dz)
+            return True
+        return FsmGame.init()._offline_original_world_mouse(dx, dy, dz)
+
+    def rotate_hall_view(self, dx, dy):
+        if not (dx or dy):
+            return
+        player = BigWorld.player()
+        turning = keys.KEY_RIGHTMOUSE in self.hall_mouse_buttons
+        if turning:
+            self.hall_body_yaw = None
+            player.model.bh.yaw_enable = True
+        else:
+            if self.hall_body_yaw is None:
+                self.hall_body_yaw = player.model.bh.bh_yaw
+            player.model.bh.yaw_enable = False
+        cursor = BigWorld.dcursor()
+        speed = cursor.mouseSensitivity
+        cursor.yaw += dx*speed
+        sign = 1.0 if cursor.invertVerticalMovement else -1.0
+        cursor.pitch = max(cursor.minPitch, min(cursor.maxPitch, cursor.pitch+dy*speed*sign))
+        self.hall_yaw, self.hall_pitch = cursor.yaw, cursor.pitch
+        if turning:
+            player.model.yaw = cursor.yaw
+            player.model.bh.bh_yaw = cursor.yaw
+        else:
+            player.model.yaw = self.hall_body_yaw
+            player.model.bh.bh_yaw = self.hall_body_yaw
+        self.hall_drag_moved = True
 
     def capture_hall_camera(self):
-        if camera.inst.current is camera.bc and not self.cursor_shown and not self.hall.chat_open:
+        if camera.inst.current is camera.bc and not self.hall.chat_open:
             self.hall_pitch = BigWorld.dcursor().pitch
             self.hall_yaw = BigWorld.dcursor().yaw
 
@@ -548,7 +697,7 @@ class HeroStage(object):
         practice = getattr(self.runtime, 'practice', None)
         if practice is not None and practice.engaged:
             return self.previous_camera_mouse(dx, dy, dz)
-        if FsmGame.state_is_offline() and not self.visible and not self.cursor_shown and dz:
+        if FsmGame.state_is_offline() and self.hall_world_input() and dz:
             self.hall_camera_distance = max(1.0, min(30.0,
                 self.hall_camera_distance*(0.9 if dz > 0 else 1.0/0.9)))
             camera.bc.bw_cam.pivotMaxDist = self.hall_camera_distance
@@ -598,9 +747,35 @@ class HeroStage(object):
         # for the requested menu/return keys; movement continues through the FSM.
         if not down:
             self.menu_keys_down.discard(key)
+            if key in getattr(self, 'hall_mouse_buttons', ()):
+                self.update_hall_drag()
+                self.hall_mouse_buttons.discard(key)
+                if not self.hall_mouse_buttons:
+                    self.stop_hall_drag()
+                # The native UI saw the press before the world drag started.
+                # It must also see the release to clear its button/capture state.
+                # Consuming it here leaves subsequent menu clicks stuck down.
         practice = getattr(self.runtime, 'practice', None)
-        if practice is not None and practice.engaged:
-            return practice.handle_key(down, key, vk, mods)
+        settings_open = bool(getattr(getattr(getattr(self.runtime, 'settings', None), 'ui', None), 'visible', False))
+        if key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE) and self.hall_world_input():
+            # MOD_CITY normally also forwards unhandled pointer events to the
+            # player's skill handlers. Dispatch widgets first, then the world
+            # drag, and keep both press and release out of the combat path.
+            import C_ui, GUI
+            if not (C_ui.handleKeyEvent(down, key, vk, mods)
+                    or GUI.handleKeyEvent(down, key, mods)):
+                self.handle_hall_mouse_key(down, key, vk, mods)
+            return True
+        if down and key in (keys.KEY_W, keys.KEY_A, keys.KEY_S, keys.KEY_D) and self.hall_world_input():
+            self.hall_body_yaw = None
+            BigWorld.player().model.bh.yaw_enable = True
+        if key in (keys.KEY_LCONTROL, getattr(keys, 'KEY_RCONTROL', keys.KEY_LCONTROL)):
+            return not (self.hall.chat_open or settings_open or self.visible)
+        if self.visible and key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE):
+            self.preview_drag = bool(down)
+            BigWorld.sendMouseMovementToScript(bool(down))
+            # Let existing widgets receive their normal click/release events.
+            return False
         if SysBox.instance().show_array:
             if key == keys.KEY_ESCAPE:
                 if down:
@@ -622,18 +797,13 @@ class HeroStage(object):
                     self.hall.close_chat()
                 return True
             return False
-        if FsmGame.state_is_offline() and not self.visible and key in (
-                keys.KEY_LCONTROL, getattr(keys, 'KEY_RCONTROL', keys.KEY_LCONTROL)):
+        if key == keys.KEY_RETURN and not self.visible and not mods:
             if down and key not in self.menu_keys_down:
                 self.menu_keys_down.add(key)
-                if not self.cursor_shown:
-                    self.capture_hall_camera()
-                self.cursor_shown = not self.cursor_shown
-                ShortcutManager.instance().ob_show_cursor(self.cursor_shown)
-                self.restore_hall_control()
-            elif not down:
-                self.menu_keys_down.discard(key)
+                self.hall.open_chat()
             return True
+        if practice is not None and practice.engaged:
+            return practice.handle_key(down, key, vk, mods)
         if FsmGame.state_is_offline() and not mods:
             if key == keys.KEY_RETURN and not self.visible:
                 if down and key not in self.menu_keys_down:
@@ -672,6 +842,9 @@ class HeroStage(object):
 
     def handle_app_active(self, active):
         if not active:
+            self.stop_hall_drag()
+            self.preview_drag = False
+            BigWorld.sendMouseMovementToScript(False)
             self.capture_hall_camera()
         self.previous_active_handler(active)
         if not active:
@@ -718,6 +891,11 @@ class HeroStage(object):
         if self.closed:
             return
         self.runtime.hide_map()
+        practice = getattr(self.runtime, 'practice', None)
+        if practice is None or not practice.active:
+            aim = getattr(BigWorld.player(), 'aim', None)
+            if aim is not None:
+                aim.enabled(False)
         if not self.visible and self.control_restore_pending:
             if self.resume_hall_behavior():
                 self.runtime.write_status()
@@ -917,6 +1095,17 @@ class HeroStage(object):
         raise ValueError('Unknown local validation action')
 
     def destroy(self):
+        self.stop_hall_drag()
+        self.preview_drag = False
+        BigWorld.sendMouseMovementToScript(False)
+        from debug import DebugManager
+        manager = DebugManager.instance
+        if manager.handle_mouse_event == self.offline_mouse_handler:
+            manager.handle_mouse_event = manager._offline_original_preview_mouse
+        if manager.handle_key_event == self.hall_key_handler:
+            manager.handle_key_event = manager._offline_original_hall_key
+        if FsmGame.init().handle_mouse_event == self.world_mouse_handler:
+            FsmGame.init().handle_mouse_event = FsmGame.init()._offline_original_world_mouse
         if self.visible:
             self.hide()
         self.closed = True

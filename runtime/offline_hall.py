@@ -39,7 +39,7 @@ class OfflineHall(object):
         self.buttons = []
         self.chat_open = False
         for name, build in [('navigation', self.navigation), ('activities', self.activities),
-                            ('toolbar', self.toolbar), ('chat', self.chat), ('team', self.team)]:
+                            ('toolbar', self.toolbar), ('chat', self.chat)]:
             try:
                 build()
                 self.log('Original hall HUD installed: '+name)
@@ -138,14 +138,18 @@ class OfflineHall(object):
     def open_chat(self):
         if self.chat_open:
             return
+        self.hero_page.stop_hall_drag()
         self.hero_page.capture_hall_camera()
         self.heroes.close_bag()
         self.chat_open = True
+        self.chat_return_visible = self.chat_panel.visible
+        self.chat_panel.visible = True
         for name in ['show_content', 'con_list', 'img_bg']:
             getattr(self.chat_panel, name).visible = True
         FsmGame.set_hero_only_move(True)
         FsmGame.init().mode = FsmGame.MOD_NOML
         self.chat_panel.chat_edit.active = True
+        self.hero_page.cursor_shown = True
 
     def close_chat(self):
         if not self.chat_open:
@@ -154,7 +158,8 @@ class OfflineHall(object):
         self.chat_panel.chat_edit.active = False
         for name in ['show_content', 'con_list', 'img_bg']:
             getattr(self.chat_panel, name).visible = False
-        self.hero_page.restore_hall_control()
+        self.chat_panel.visible = getattr(self, 'chat_return_visible', True)
+        self.hero_page.sync_input_mode()
 
     def chat_focus_changed(self, sender):
         if self.chat_panel.chat_edit.active and not self.chat_open:

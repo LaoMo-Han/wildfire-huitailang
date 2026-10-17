@@ -33,8 +33,8 @@ class LocalEntry(PracticeEntry):
 
 class LocalPractice(object):
     SCENE = 'zd_gangtyztest'
-    SPAWN = (0.0, 1.0, 0.0)
-    TARGET_SPAWN = (0.0, 0.0, 6.0)
+    SPAWN = (-0.22, 0.07, -4.15)
+    TARGET_SPAWN = (0.37, 0.07, 3.94)
     PANELS = ('practice_toolbar', 'practice_damage_dlg', 'practice_lvup_prompt',
               'battle_hp', 'battle_skill', 'battle_item_dlg', 'equip_evolution_v2', 'tipkey_panel', 'miniMap')
     MODALS = ('skill_desc_dlgb', 'equip_evolution',
@@ -56,6 +56,7 @@ class LocalPractice(object):
         self.errors = {}
         self.return_scene = None
         self.saved_gui = {}
+        self.last_safe_position = None
         self.toolbar = guiManager.get_ui('practice_toolbar')
         self.helper = PracticeRoomHelper.instance()
         # Startup already registers practice shortcuts even while hiding its UI.
@@ -72,6 +73,7 @@ class LocalPractice(object):
         self.helper.reset_impl = self.reset
         self.install_damage_hook()
         self.install_skill_hook()
+        self.install_local_combat()
         self.install_equipment_hooks()
         self.install_difficulty_buttons()
         self.install_toolbar_buttons()
@@ -158,11 +160,37 @@ class LocalPractice(object):
             part.visible = False
         self.loading = True
         self.active = True
-        manager.teleport(self.SCENE, self.SPAWN, self.ready)
+        self.teleport_scene(self.SCENE, self.SPAWN, self.ready)
         self.runtime.write_status()
 
     def ready(self):
+        self.ready_attempts = 0
+        BigWorld.loadSpaceChunks(BigWorld.player().spaceID)
+        self.try_ready()
+
+    def try_ready(self):
+        if not self.active:
+            return
+        try:
+            self.arena_spawn, self.target_spawn = self.grounded_spawns(self.SPAWN, self.TARGET_SPAWN)
+        except ValueError:
+            self.ready_attempts += 1
+            if self.ready_attempts < 30:
+                BigWorld.player().physics.teleport(self.SPAWN, (0.0, 0.0, 0.0))
+                BigWorld.callback(0.5, self.try_ready)
+                return
+            self.guard('ready', self._ready)
+            return
         self.guard('ready', self._ready)
+
+    def teleport_scene(self, scene, position, callback):
+        from debug import DebugManager
+        manager = DebugManager.instance
+        # DebugManager returns without invoking the callback for the same space.
+        same_space = manager.cSpaceName == scene
+        manager.teleport(scene, position, callback)
+        if same_space:
+            BigWorld.callback(0.0, callback)
 
     def _ready(self):
         player = BigWorld.player()
@@ -174,6 +202,8 @@ class LocalPractice(object):
         from common_data import practice_bot_config_data
         self.toolbar.bot_use_heros = sorted(set(self.runtime.hero_ids).intersection(practice_bot_config_data.data))
         self.toolbar.btn_toggle_ai.enabled = True
+        player.physics.teleport(self.arena_spawn, (0.0, 0.0, 0.0))
+        self.last_safe_position = self.arena_spawn
         self.helper.reset_damage_accumulation()
         self.enable_cooldowns()
         self.set_level(1)
@@ -188,9 +218,10 @@ class LocalPractice(object):
             part = guiManager.instance().elements.get(name)
             if part is not None and hasattr(part, 'visible'):
                 part.visible = False
+        self.toolbar.hero_list.visible = False
+        self.runtime.hall.hero_page.cursor_shown = False
         self.restore_control()
         self.runtime.apply_saved_appearance(True)
-        self.toolbar.set_selection(2)
         self.runtime.log('Local practice arena ready: '+self.SCENE)
         self.runtime.write_status()
 
@@ -280,6 +311,7 @@ class LocalPractice(object):
         self.guard('reset', lambda: self._reset(clear_evo_and_lv))
 
     def _reset(self, clear_evo_and_lv):
+        self.combat.clear()
         self.helper.clear_all()
         self.helper.force_update_mana()
         self.helper.reset_damage_accumulation()
@@ -289,6 +321,7 @@ class LocalPractice(object):
         cdmgr.reset()
         guiManager.get_ui('battle_skill').update_cd()
         self.enable_cooldowns()
+        self.refill_skill_resources()
         self.equipment_category = None
         guiManager.get_ui('equip_evolution_v2').hide_popup()
         player.physics.teleport(getattr(self, 'arena_spawn', self.SPAWN), (0.0, 0.0, 0.0))
@@ -308,7 +341,24 @@ class LocalPractice(object):
             self.recover(player)
         if self.toolbar.combo_mgr.is_combo_practice_on:
             self.toolbar.combo_mgr.combo_reset()
+        from hook import hero_hooker
+        hero_hooker(player.hero_type, 'on_practice_reset', player)
+        self.restore_control()
         self.runtime.write_status()
+
+    def refill_skill_resources(self):
+        player = BigWorld.player()
+        manager = getattr(player, 'mana', None)
+        if manager is not None:
+            manager.clear_pending_skill()
+            for identity, resource in manager.mana.items():
+                total = resource._mana_total_amount
+                if total is not None:
+                    resource._skill_timer_end()
+                    manager.set_curr(identity, total)
+                    resource.update()
+        player.client_start_auto_skill()
+        guiManager.get_ui('battle_skill').update_skill()
 
     def set_level(self, level):
         player = BigWorld.player()
@@ -382,6 +432,20 @@ class LocalPractice(object):
             from debug.UniverseSelectionDlg import SelectionDlg
             owner = self
             class LocalMaps(SelectionDlg):
+                def load_universes(dialog):
+                    from guis import xnui
+                    import rc
+                    rows = owner.map_catalog()
+                    dialog.map_buttons = []
+                    dialog.universe_panel = xnui.XScrollMaskPanel(dialog, 0, 44, 380,
+                        dialog.height-98, 380, max(1, len(rows))*50)
+                    guiManager.instance().on_ui_active(dialog.universe_panel)
+                    for index, (scene, title) in enumerate(rows):
+                        button = xnui.XButton(dialog.universe_panel, 60, index*50,
+                            rc.COMMON_BTN_RECT_BIG, title)
+                        button.scene_name = scene
+                        dialog.map_buttons.append(button)
+                        button.event_click = lambda sender, scene=scene: owner.change_map(scene)
                 def on_btn_universe_clicked(dialog, sender):
                     owner.change_map(sender.text.rstrip())
                 def on_btn_close_clicked(dialog, sender):
@@ -400,10 +464,72 @@ class LocalPractice(object):
             self.map_dialog.topmostEx()
         self.restore_control()
 
+    def map_catalog(self):
+        import MapConfig
+        import ResMgr
+        available = set(name[:-4] if name.endswith('.bag') else name
+                        for name in ResMgr.openSection('universes')['eg'].keys())
+        rows = {}
+        for number in sorted(MapConfig.SpaceDict):
+            config = MapConfig.SpaceDict[number]
+            scene = config['map'].rsplit('/', 1)[-1]
+            if scene in available and scene not in rows:
+                rows[scene] = u'\u7ec3\u4e60\u573a'.encode('gbk') if scene == self.SCENE else config['name']
+        return sorted(rows.items(), key=lambda row: row[1])
+
+    def map_seed(self, scene):
+        import MapConfig
+        for number in sorted(MapConfig.SpaceDict):
+            config = MapConfig.SpaceDict[number]
+            if config['map'].rsplit('/', 1)[-1] != scene:
+                continue
+            try:
+                module = __import__('cdata.spheres.sphere_'+str(number), fromlist=['data'])
+            except ImportError:
+                continue
+            points = module.data.get('RelivePoints', {})
+            point = points.get((1, 1))
+            if point is not None:
+                pos = tuple(point['position'])
+                return (pos[0], pos[1]+0.1, pos[2])
+            pos = module.data.get('start_pos')
+            if pos is not None:
+                return tuple(pos)
+        return self.SPAWN if scene == self.SCENE else (0.0, 2.0, 0.0)
+
+    def grounded_spawns(self, player_seed, target_seed):
+        player = BigWorld.player()
+        def ground(seed, extra):
+            x, y, z = seed
+            # Start above the recorded floor, avoiding ceilings far above it.
+            hit = ClientUtils.get_collide_info(player.spaceID, (x, y+1.0, z),
+                (x, y-30.0, z), comp_collide=False)
+            if hit is None:
+                raise ValueError('Map collision is not ready at its spawn')
+            return (x, hit.position[1]+extra, z)
+        player_spawn = ground(player_seed, 0.05)
+        try:
+            target_spawn = ground(target_seed, 0.05)
+        except ValueError:
+            x, y, z = player_spawn
+            for dx, dz in ((0, -3), (3, 0), (-3, 0), (0, 0)):
+                try:
+                    target_spawn = ground((x+dx, y, z+dz), 0.05)
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValueError('Map collision is not ready near its spawn')
+        return player_spawn, target_spawn
+
     def change_map(self, scene):
         if not self.active or self.loading:
             return
         from debug import DebugManager
+        if scene not in dict(self.map_catalog()):
+            from system import MsgManager
+            MsgManager.show(text=u'\u672c\u5730\u5ba2\u6237\u7aef\u7f3a\u5c11\u8fd9\u5f20\u5730\u56fe\u7684\u8d44\u6e90'.encode('gbk'))
+            return
         if scene == DebugManager.instance.cSpaceName:
             return
         if hasattr(self, 'map_dialog'):
@@ -413,12 +539,18 @@ class LocalPractice(object):
         self.map_ai = self.ai
         player = BigWorld.player()
         self.map_player_state = (int(player.lv), int(player.cash), int(player.realSPSkill))
+        self.map_previous_scene = DebugManager.instance.cSpaceName
+        self.map_player_seed = self.map_seed(scene)
+        x, y, z = self.map_player_seed
+        self.map_target_seed = (x, y, z+5.0)
+        self.combat.clear()
         self.helper.clear_all()
         self.target_id = None
-        DebugManager.instance.teleport(scene, (0.0, 5.0, 0.0), self.map_ready)
+        self.teleport_scene(scene, self.map_player_seed, self.map_ready)
 
     def map_ready(self):
         self.map_attempts = 0
+        BigWorld.loadSpaceChunks(BigWorld.player().spaceID)
         BigWorld.callback(0.5, self.try_map_ready)
 
     def try_map_ready(self):
@@ -430,30 +562,30 @@ class LocalPractice(object):
             self.errors.pop('map', None)
         except ValueError:
             if self.map_attempts < 30:
+                BigWorld.player().physics.teleport(self.map_player_seed, (0.0, 0.0, 0.0))
                 BigWorld.callback(0.5, self.try_map_ready)
                 return
             self.loading = False
             from debug import DebugManager
             if DebugManager.instance.cSpaceName != self.SCENE:
                 self.loading = True
-                DebugManager.instance.teleport(self.SCENE, self.SPAWN, self.map_ready)
+                self.map_player_seed, self.map_target_seed = self.SPAWN, self.TARGET_SPAWN
+                self.teleport_scene(self.SCENE, self.SPAWN, self.map_ready)
             else:
                 self.arena_spawn, self.target_spawn = self.SPAWN, self.TARGET_SPAWN
                 self.reset()
                 self.restore_control()
         except Exception:
             self.loading = False
-            self.guard('map', self._map_ready)
+            self.errors['map'] = traceback.format_exc()
+            self.runtime.last_error = self.errors['map']
+            self.runtime.log(self.errors['map'])
+            self.runtime.write_status()
 
     def _map_ready(self):
         player = BigWorld.player()
-        def ground(x, z, offset):
-            hit = ClientUtils.get_collide_info(player.spaceID, (x, 1000.0, z), (x, -1000.0, z), comp_collide=False)
-            if hit is None:
-                raise ValueError('No ground at map spawn')
-            return (x, hit.position[1]+offset, z)
-        self.arena_spawn = ground(0.0, 0.0, 1.0)
-        self.target_spawn = ground(0.0, 6.0, 0.05)
+        self.arena_spawn, self.target_spawn = self.grounded_spawns(self.map_player_seed, self.map_target_seed)
+        self.last_safe_position = self.arena_spawn
         player.physics.teleport(self.arena_spawn, (0.0, 0.0, 0.0))
         self.loading = False
         level, cash, sp_skill = self.map_player_state
@@ -565,6 +697,13 @@ class LocalPractice(object):
                 owner.reset()
             owner.guard('sp_skill', select)
         SpaceBox.on_sensor_click = clicked
+
+    def install_local_combat(self):
+        if hasattr(self, 'combat'):
+            self.combat.clear()
+        context = {}
+        execfile('../res/editor/client/offline_combat.py', context)
+        self.combat = context['LocalCombat'](self)
 
     def install_equipment_hooks(self):
         import types
@@ -726,6 +865,7 @@ class LocalPractice(object):
         self.guard('leave', self._leave)
 
     def _leave(self):
+        self.combat.clear()
         from debug import DebugManager
         self.loading = True
         self.ai = False
@@ -736,6 +876,7 @@ class LocalPractice(object):
         self.toolbar._combo_practice_exit()
         self.toolbar.hero_list.visible = False
         self.toolbar.difficulty_choose.visible = False
+        guiManager.get_ui('hero_attr_panel').visible = False
         for name in self.PANELS + self.MODALS:
             part = guiManager.instance().elements.get(name)
             if part is not None:
@@ -788,7 +929,9 @@ class LocalPractice(object):
             if down and key not in self.keys_down:
                 self.keys_down.add(key)
                 if self.active:
-                    if getattr(getattr(self, 'map_dialog', None), 'visible', False):
+                    if getattr(guiManager.instance().elements.get('hero_attr_panel'), 'visible', False):
+                        guiManager.get_ui('hero_attr_panel').visible = False
+                    elif getattr(getattr(self, 'map_dialog', None), 'visible', False):
                         self.toggle_maps()
                     elif getattr(self, 'equipment_category', None) is not None:
                         self.equipment_category = None
@@ -820,6 +963,7 @@ class LocalPractice(object):
                    keys.KEY_F6:lambda: self.toolbar_action('combo'),
                    keys.KEY_B:lambda: self.reset(bool(mods & keys.MODIFIER_SHIFT)),
                    keys.KEY_Y:self.toggle_ai,
+                   keys.KEY_P:self.toggle_attributes,
                    keys.KEY_GRAVE:self.undo_purchase,
                    keys.KEY_L:lambda: self.set_level(16 if mods & keys.MODIFIER_SHIFT else BigWorld.player().lv+1)}
         for index in range(5):
@@ -830,20 +974,26 @@ class LocalPractice(object):
                 self.guard('key', actions[key])
             return True
         if key in (keys.KEY_LCONTROL, getattr(keys, 'KEY_RCONTROL', keys.KEY_LCONTROL)):
-            if down and key not in self.keys_down:
-                self.keys_down.add(key)
-                stage = self.runtime.hall.hero_page
-                stage.cursor_shown = not stage.cursor_shown
-                from system import ShortcutManager
-                ShortcutManager.instance().ob_show_cursor(stage.cursor_shown)
-                stage.restore_hall_control()
             return True
         # Do not route Z/X/C/V and B into the hall's pages/bag during combat.
         return False
 
+    def toggle_attributes(self):
+        panel = guiManager.get_ui('hero_attr_panel')
+        panel.visible = not panel.visible
+        if panel.visible:
+            panel.topmostEx()
+        self.runtime.write_status()
+
     def tick(self):
         if self.active and not self.loading:
+            self.guard('combat', self.combat.tick)
+        if self.active and not self.loading:
             def update():
+                player = BigWorld.player()
+                safe = getattr(self, 'last_safe_position', None)
+                if safe is not None and player.position[1] < safe[1]-60.0:
+                    player.physics.teleport(safe, (0.0, 0.0, 0.0))
                 target = self.get_target()
                 if target is not None and target.hp <= 0:
                     self.recover(target)
@@ -897,6 +1047,7 @@ class LocalPractice(object):
             self.__class__ = context['LocalPractice']
             self.install_damage_hook()
             self.install_skill_hook()
+            self.install_local_combat()
             self.install_equipment_hooks()
             self.install_difficulty_buttons()
             self.install_toolbar_buttons()
@@ -905,10 +1056,14 @@ class LocalPractice(object):
             execfile('../res/editor/client/hero_stage.py', stage_context)
             stage = self.runtime.hall.hero_page
             stage.__class__ = stage_context['HeroStage']
+            stage.install_view_controls()
             from system import camera
             stage.camera_mouse_handler = stage.handle_camera_mouse
             camera.bc.handle_mouse_event = stage.camera_mouse_handler
-            stage.restore_hall_control()
+            if stage.visible:
+                stage.sync_input_mode()
+            else:
+                stage.restore_hall_control()
             if self.active:
                 self.enable_cooldowns()
         elif action == 'inspect':
@@ -986,7 +1141,7 @@ class LocalPractice(object):
         elif action == 'restore_arena':
             from debug import DebugManager
             self.loading = True
-            DebugManager.instance.teleport(self.SCENE, self.SPAWN, self.ready)
+            self.teleport_scene(self.SCENE, self.SPAWN, self.ready)
         elif action == 'sell':
             self.sell_equipment(int(command['evo_id']), int(command.get('parent_id', 0)))
         elif action == 'sell_selected':

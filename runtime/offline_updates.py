@@ -15,16 +15,19 @@ class Updates(object):
         self.runtime = runtime
         self.data = {}
         self.pending_check = None
-        self.panel = xnui.XDialog(xnui.get_anchor(xnui.RIGHT_TOP), -490, 52, rc.COMMON_BG_DUMMY)
-        self.panel.set_size(270, 66)
+        # Keep all updater UI inside the native settings window. Its parent
+        # hides immediately when settings close, even before the next poll.
+        self.panel = xnui.XDialog(runtime.settings.ui, 205, 466, rc.COMMON_BG_DUMMY)
+        self.panel.set_size(410, 77)
         self.label = xnui.XLabel(self.panel, 0, 0, gb(u'\u5355\u673a\u7248'), font.TEXT_12, color.WATER_BLUE)
-        self.button = xnui.XButton(self.panel, 0, 22, rc.COMMON_BTN_RECT_BIG, gb(u'\u68c0\u67e5\u66f4\u65b0'))
-        self.button.set_size(126, 32)
-        self.feedback = xnui.XButton(self.panel, 134, 22, rc.COMMON_BTN_RECT_BIG, gb(u'\u53cd\u9988 Bug'))
-        self.feedback.set_size(126, 32)
+        self.button = xnui.XButton(self.panel, 0, 25, rc.COMMON_BTN_RECT_BIG, gb(u'\u68c0\u67e5\u66f4\u65b0'))
+        self.button.set_size(150, 44)
+        self.feedback = xnui.XButton(self.panel, 162, 25, rc.COMMON_BTN_RECT_BIG, gb(u'\u53cd\u9988 Bug'))
+        self.feedback.set_size(150, 44)
         self.button.event_click = lambda sender: self.clicked()
         self.feedback.event_click = lambda sender: self.request('feedback')
         guiManager.instance().elements['offline_updates'] = self.panel
+        self.panel.visible = bool(runtime.settings.ui.visible)
         BigWorld.callback(0.5, self.tick)
 
     def request(self, action):
@@ -72,18 +75,17 @@ class Updates(object):
             if state in ('available','downloading','ready'):
                 label += u' \u2192 '+self.data.get('version','')
             self.label.text = gb(label)
-            text = {'available':u'\u6709\u65b0\u7248\u672c','ready':u'\u9000\u51fa\u5e76\u66f4\u65b0','checking':u'\u6b63\u5728\u68c0\u67e5','error':u'\u91cd\u8bd5\u68c0\u67e5'}.get(state,u'\u68c0\u67e5\u66f4\u65b0')
+            text = {'available':u'\u6709\u65b0\u7248\u672c','ready':u'\u9000\u51fa\u5e76\u66f4\u65b0','checking':u'\u6b63\u5728\u68c0\u67e5'}.get(state,u'\u68c0\u67e5\u66f4\u65b0')
             if state == 'downloading':
                 text = u'\u4e0b\u8f7d '+str(self.data.get('progress',0))+'%'
             self.button.text = gb(text)
             if self.pending_check and self.pending_check == self.data.get('request_id') and state not in ('checking','downloading'):
                 self.pending_check = None
-                self.show()
+                if state in ('available', 'ready') and self.runtime.settings.ui.visible:
+                    self.show()
         except (IOError,ValueError):
             pass
-        self.panel.visible = not self.runtime.hall.hero_page.visible
-        if self.panel.visible:
-            self.panel.topmostEx()
+        self.panel.visible = bool(self.runtime.settings.ui.visible)
         BigWorld.callback(0.5,self.tick)
 
 def install(runtime):

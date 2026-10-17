@@ -104,7 +104,7 @@ def prepare(client,version,build,notes,include_base,previous):
         with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=1) as archive:
             for f in files:archive.write(client/f,f)
         record=asset(target,tag);record.update(id=name,files=hashes);manifest['components'].append(record);assets.append(target)
-    manual=directory/('wildfire-patch-'+version+'.zip')
+    manual=directory/('wildfire-huitailang-'+version+'.zip')
     with zipfile.ZipFile(manual,'w',zipfile.ZIP_DEFLATED,compresslevel=1) as archive:
         for files in groups.values():
             for f in files:archive.write(client/f,f)

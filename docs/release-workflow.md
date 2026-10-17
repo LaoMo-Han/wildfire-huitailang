@@ -9,7 +9,7 @@
 首次安装：在发布页下载全部本体分卷，放到同一个目录，用 7-Zip 解压 `.001`，
 再双击 `开始游戏.exe`。本体已经有更新器；首次启动如提示新版本，确认下载即可。
 
-已有完整 1.0.192 客户端：退出游戏，下载最新 `wildfire-patch-版本.zip`，
+已有完整 1.0.192 客户端：退出游戏，下载最新 `wildfire-huitailang-版本.zip`，
 解压到客户端根目录、合并并替换。补丁没有人物、地图、声音素材，不能单独运行。
 早期单机版本需要手动覆盖一次此补丁，之后使用游戏内更新。
 
@@ -28,6 +28,8 @@ python tools/publish_release.py --client "C:\offline-build" --version 2026.10.15
 ```
 
 构建号必须递增；版本号和更新说明由维护者明确填写。
+完整覆盖包统一命名为 `wildfire-huitailang-版本.zip`（中间固定带 `huitailang`）；
+组件包保持 `core-版本.zip`、`runtime-版本.zip`、`launcher-版本.zip` 不变。
 初次发布或重新制作本体时加 `--include-base`，每卷为 1500 MiB。
 日常不加这个参数，本体分卷链接继续复用；只上传变化的完整组件和完整手动补丁。
 可以用 `--previous site/latest.json` 明确指定上次清单。

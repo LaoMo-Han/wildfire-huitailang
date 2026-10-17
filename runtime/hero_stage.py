@@ -296,6 +296,8 @@ class HeroStage(object):
         self.hero_type = int(BigWorld.player().hero_type)
         self.tab = 'equip'
         self.hall_combat = False
+        self.hall_ui_hidden = False
+        self.ui_snapshot = {}
         self.source_clones = []
         self.source_clone_serial = 0
         self.source_clone_pending = 0
@@ -483,12 +485,14 @@ class HeroStage(object):
             return
         try:
             self.capture_hall_camera()
+            self.set_hall_ui_hidden(False)
             self.runtime.hide_map()
             self.runtime.close_bag()
             self.hall.close_chat()
             # Pages are cursor-driven UI; return to the peaceful hall state so
             # closing a page never drops the user back into combat.
             self.hall_combat = False
+            self.sync_input_mode()
             self.initialize_player()
             self.field.enter(self.hero_type, show_eff=False, enter_load_fashions=False, show_default_eff=False)
             self.visible = True
@@ -555,21 +559,32 @@ class HeroStage(object):
             modal = modal or getattr(getattr(practice, 'map_dialog', None), 'visible', False)
         ui_cursor = not fighting or modal
         self.cursor_shown = bool(ui_cursor)
-        FsmGame.init().mode = FsmGame.MOD_NOML if modal else (FsmGame.MOD_HERO if in_battle else FsmGame.MOD_CITY)
+        FsmGame.init().mode = FsmGame.MOD_NOML if modal else (FsmGame.MOD_HERO if fighting else FsmGame.MOD_CITY)
         FsmGame.set_hero_only_move(ui_cursor)
         # The mode setter is a no-op when the mode did not change. Focus loss
         # disables script mouse input, so explicitly restore it on every resume.
-        BigWorld.sendMouseMovementToScript(in_battle and not modal)
+        BigWorld.sendMouseMovementToScript(fighting and not modal)
         if ui_cursor:
             # Native settings can return to combat mode when closed, leaving
             # the UI cursor at its hidden sentinel even on the hero page.
             import C_ui
             if C_ui.get_cursor_pos() == (-20000, -20000):
                 C_ui.cursor_pos(*BigWorld.getCursorPos())
+            if not in_battle:
+                aim = getattr(BigWorld.player(), 'aim', None)
+                if aim is not None:
+                    # Chat/bag/pages need the cursor, not the battle crosshair.
+                    aim.enabled(False)
         BigWorld.player().move_only = bool(modal)
         if practice is not None:
             BigWorld.player().test_do_cd_check = not practice.cooldowns_disabled()
-        return in_battle
+        player = BigWorld.player()
+        if fighting and not modal and not getattr(self, 'hall_ui_hidden', False) \
+                and getattr(player, 'model', None) is not None and hasattr(player, 'aim'):
+            # Combat keeps the native aim/crosshair bound; closing chat or the
+            # bag must not leave the hall without it.
+            player.aim.active()
+        return fighting
 
     def restore_hall_control(self):
         # Restore camera ownership only at scene/page transitions, not clicks.
@@ -652,7 +667,9 @@ class HeroStage(object):
 
     def handle_hall_mouse_key(self, down, key, vk, mods):
         # Only start a world drag after the native widgets decline the press.
-        if key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE) and self.hall_world_input():
+        # With the combat cursor hidden the native battle path owns the mouse.
+        if key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE) and self.hall_world_input() \
+                and getattr(self, 'cursor_shown', True):
             if down:
                 starting = not self.hall_mouse_buttons
                 self.hall_mouse_buttons.add(key)
@@ -764,6 +781,10 @@ class HeroStage(object):
         practice = getattr(self.runtime, 'practice', None)
         if practice is not None and practice.engaged:
             return self.previous_camera_mouse(dx, dy, dz)
+        # Hall combat uses the native battle camera and wheel handling, exactly
+        # like the practice arena, so the hidden cursor keeps its raw input.
+        if getattr(self, 'hall_combat', False) and not getattr(self, 'cursor_shown', True):
+            return self.previous_camera_mouse(dx, dy, dz)
         if FsmGame.state_is_offline() and self.hall_world_input() and dz:
             self.hall_camera_distance = max(1.0, min(30.0,
                 self.hall_camera_distance*(0.9 if dz > 0 else 1.0/0.9)))
@@ -774,6 +795,10 @@ class HeroStage(object):
 
     def confirm_exit(self):
         if SysBox.instance().show_array:
+            return
+        # Esc leaves hall combat first; the confirmation box needs the cursor.
+        if getattr(self, 'hall_combat', False):
+            self.toggle_hall_combat(False)
             return
         self.capture_hall_camera()
         SysBox.double_btn(text=u'\u786e\u5b9a\u9000\u51fa\u6e38\u620f\u5417\uff1f'.encode('gbk'),
@@ -827,7 +852,8 @@ class HeroStage(object):
                 # Consuming it here leaves subsequent menu clicks stuck down.
         practice = getattr(self.runtime, 'practice', None)
         settings_open = bool(getattr(getattr(getattr(self.runtime, 'settings', None), 'ui', None), 'visible', False))
-        if key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE) and self.hall_world_input():
+        if key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE) and self.hall_world_input() \
+                and getattr(self, 'cursor_shown', True):
             # Widgets get first refusal; only blank space starts combat/drag.
             import C_ui, GUI
             ui_handled = C_ui.handleKeyEvent(down, key, vk, mods) or GUI.handleKeyEvent(down, key, mods)
@@ -918,12 +944,23 @@ class HeroStage(object):
                     self.menu_keys_down.add(key)
                     if key == keys.KEY_B:
                         self.runtime.toggle_bag()
+                        self.sync_input_mode()
                     elif self.runtime.close_bag():
-                        pass
+                        self.sync_input_mode()
+                    elif getattr(self, 'hall_ui_hidden', False):
+                        self.set_hall_ui_hidden(False)
                     elif self.visible:
                         self.hide()
                     else:
                         self.confirm_exit()
+                elif not down:
+                    self.menu_keys_down.discard(key)
+                return True
+            hide_ui_key = getattr(keys, 'KEY_H', None)
+            if hide_ui_key is not None and key == hide_ui_key and not self.visible:
+                if down and key not in self.menu_keys_down:
+                    self.menu_keys_down.add(key)
+                    self.toggle_hall_ui()
                 elif not down:
                     self.menu_keys_down.discard(key)
                 return True
@@ -1005,10 +1042,75 @@ class HeroStage(object):
             return False
         current = bool(getattr(self, 'hall_combat', False))
         self.hall_combat = (not current) if value is None else bool(value)
-        self.sync_input_mode()
+        # Reuse the training-arena input path: hidden cursor, raw mouse look and
+        # the native battle camera while fighting, then the city cursor again.
+        self.capture_hall_camera()
+        self.restore_hall_control()
+        if getattr(self, 'hall_ui_hidden', False):
+            self.set_hall_crosshair(False)
         self.hall.refresh_hints()
         self.log('Hall combat mode: '+str(self.hall_combat))
         self.runtime.write_status()
+        return True
+
+    def set_hall_crosshair(self, visible):
+        # Only the reticle image is touched: disabling Aim itself would unbind
+        # the battle camera and spin the view while the cursor is captured.
+        aim = getattr(BigWorld.player(), 'aim', None)
+        ring = getattr(aim, 'ring', None) if aim is not None else None
+        if ring is None:
+            return False
+        try:
+            ring.visible = bool(visible)
+        except Exception:
+            return False
+        return True
+
+    def set_hall_ui_hidden(self, hidden):
+        hidden = bool(hidden)
+        if hidden == bool(getattr(self, 'hall_ui_hidden', False)):
+            return
+        if hidden:
+            snapshot = {}
+            for name, part in guiManager.instance().elements.items():
+                try:
+                    if part.visible:
+                        snapshot[name] = True
+                        part.visible = False
+                except Exception:
+                    pass
+            self.ui_snapshot = snapshot
+            for part in self.hall.parts.values():
+                part.visible = False
+            self.hall_ui_hidden = True
+            if getattr(self, 'hall_combat', False):
+                self.set_hall_crosshair(False)
+            self.log('Hall UI hidden: '+str(len(snapshot))+' elements')
+        else:
+            for name in getattr(self, 'ui_snapshot', {}):
+                part = guiManager.instance().elements.get(name)
+                if part is not None:
+                    try:
+                        part.visible = True
+                    except Exception:
+                        pass
+            self.ui_snapshot = {}
+            for part in self.hall.parts.values():
+                part.visible = True
+            self.hall_ui_hidden = False
+            if getattr(self, 'hall_combat', False):
+                self.set_hall_crosshair(True)
+            self.log('Hall UI restored')
+        self.runtime.write_status()
+
+    def toggle_hall_ui(self, value=None):
+        practice = getattr(self.runtime, 'practice', None)
+        if self.visible or self.hall.chat_open or self.closed:
+            return False
+        if practice is not None and practice.engaged:
+            return False
+        hidden = (not getattr(self, 'hall_ui_hidden', False)) if value is None else bool(value)
+        self.set_hall_ui_hidden(hidden)
         return True
 
     def combat_keys(self):
@@ -1114,17 +1216,17 @@ class HeroStage(object):
             return []
         combat = bool(getattr(self, 'hall_combat', False))
         if combat:
-            lines = [u'\u5927\u5385\u00b7\u6218\u6597\u72b6\u6001\uff08Tab \u8fd4\u56de\u975e\u6218\u6597\uff09',
+            lines = [u'\u5927\u5385\u00b7\u6218\u6597\u72b6\u6001\uff08Tab/Esc \u8fd4\u56de\u975e\u6218\u6597\uff09',
                      u'\u5de6\u952e\u7a7a\u767d\u5904\u666e\u653b\uff0cQ/E/R/F/C \u91ca\u653e\u6280\u80fd',
-                     u'WASD \u79fb\u52a8\uff0c\u6eda\u8f6e\u62c9\u8fd1\u62c9\u8fdc',
-                     u'\u5de6\u952e\u62d6\u52a8\u89c6\u89d2\uff0c\u53f3\u952e\u62d6\u52a8\u540c\u65f6\u8f6c\u5411']
+                     u'WASD \u79fb\u52a8\uff0c\u9f20\u6807\u79fb\u52a8\u8f6c\u52a8\u89c6\u89d2',
+                     u'\u51c6\u5fc3\u3001\u5149\u6807\u4e0e\u8f93\u5165\u65b9\u5f0f\u4e0e\u7ec3\u4e60\u573a\u4e00\u81f4']
         else:
             lines = [u'\u5927\u5385\u00b7\u975e\u6218\u6597\u72b6\u6001\uff08Tab \u8fdb\u5165\u6218\u6597\uff09',
                      u'WASD \u79fb\u52a8\uff0c\u6eda\u8f6e\u62c9\u8fd1\u62c9\u8fdc',
                      u'\u5de6\u952e\u62d6\u52a8\u89c6\u89d2\uff0c\u53f3\u952e\u62d6\u52a8\u540c\u65f6\u8f6c\u5411',
                      u'\u754c\u9762\u6309\u94ae\u4f18\u5148\uff0c\u6b64\u65f6\u4e0d\u4f1a\u91ca\u653e\u6280\u80fd']
         lines.append(u'\u56de\u8f66 \u804a\u5929\uff0cZ \u82f1\u96c4\uff0cX \u65f6\u88c5\uff0cC \u8bed\u97f3\uff0cV \u6545\u4e8b')
-        lines.append(u'B \u80cc\u5305\uff0cEsc \u9000\u51fa\u786e\u8ba4')
+        lines.append(u'B \u80cc\u5305\uff0cH \u9690\u85cf/\u663e\u793a\u5168\u90e8 UI\uff0cEsc \u9000\u51fa\u786e\u8ba4')
         lines.append(u'\u82f1\u96c4/\u65f6\u88c5\u9875\u70b9\u201c\u6e90\u529b\u5851\u5f62\u201d\u5728\u811a\u4e0b\u751f\u6210\u590d\u5236\u4f53')
         if self.hall.chat_open:
             lines.append(u'\u804a\u5929\u8f93\u5165\u4e2d\uff1a\u56de\u8f66\u6216 Esc \u6536\u8d77\uff08\u79bb\u7ebf\u4e0d\u53d1\u9001\uff09')
@@ -1153,7 +1255,8 @@ class HeroStage(object):
         self.runtime.hide_map()
         self.maintain_source_clones()
         practice = getattr(self.runtime, 'practice', None)
-        if practice is None or not practice.active:
+        hall_fighting = bool(getattr(self, 'hall_combat', False)) and not getattr(self, 'cursor_shown', True)
+        if (practice is None or not practice.active) and not hall_fighting:
             aim = getattr(BigWorld.player(), 'aim', None)
             if aim is not None:
                 aim.enabled(False)
@@ -1220,6 +1323,7 @@ class HeroStage(object):
         result['appearance_updates'] = self.runtime.appearance_updates
         result['chat_open'] = self.hall.chat_open
         result['hall_combat'] = bool(getattr(self, 'hall_combat', False))
+        result['hall_ui_hidden'] = bool(getattr(self, 'hall_ui_hidden', False))
         result['source_clones'] = len(getattr(self, 'source_clones', ()))
         result['hint_lines'] = [line.decode('gbk', 'replace') for line in getattr(self.hall, 'hints', ())][:9]
         result['visible_hero_count'] = len(self.selector.part_basic.hero_list.use_heros)

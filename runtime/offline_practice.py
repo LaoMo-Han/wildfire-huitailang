@@ -115,13 +115,14 @@ class LocalPractice(object):
         stage = self.runtime.hall.hero_page
         if stage.visible:
             stage.hide()
+        stage.set_hall_ui_hidden(False)
         self.runtime.close_bag()
         self.runtime.hall.close_chat()
         stage.capture_hall_camera()
         self.entry.enter_lock = False
         self.entry.visible = True
         self.entry.topmostEx()
-        FsmGame.init().mode = FsmGame.MOD_NOML
+        stage.sync_input_mode()
         self.runtime.write_status()
 
     def close_entry(self):
@@ -164,6 +165,7 @@ class LocalPractice(object):
         stage = self.runtime.hall.hero_page
         if hasattr(stage, 'hall_combat'):
             stage.hall_combat = False
+        stage.set_hall_ui_hidden(False)
         self.saved_gui = dict((name, bool(part.visible)) for name, part in guiManager.instance().elements.items()
                               if hasattr(part, 'visible'))
         for part in self.runtime.hall.parts.values():

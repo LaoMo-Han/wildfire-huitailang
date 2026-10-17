@@ -79,8 +79,11 @@ class HintTests(unittest.TestCase):
         self.assertIn(u'Tab', lines[0])
         self.assertIn(u'\u975e\u6218\u6597', lines[0])
         text = u''.join(lines)
-        for key in (u'\u56de\u8f66', u'Z', u'X', u'C', u'V', u'B', u'Esc', u'\u6e90\u529b\u5851\u5f62'):
+        for key in (u'\u56de\u8f66', u'Z', u'X', u'C', u'V', u'B', u'H', u'Esc', u'\u6e90\u529b\u5851\u5f62'):
             self.assertIn(key, text)
+
+    def test_hidden_ui_key_is_documented_as_h(self):
+        self.assertIn(u'H \u9690\u85cf/\u663e\u793a\u5168\u90e8 UI', self.stage.hint_lines()[5])
 
     def test_combat_hints_switch_to_skill_help(self):
         self.stage.hall_combat = True
@@ -204,6 +207,83 @@ class SpawnTests(unittest.TestCase):
         self.bigworld.entity = lambda entity_id: None
         self.stage.maintain_source_clones()
         self.assertEqual(self.stage.source_clones, [])
+
+
+class UiHideTests(unittest.TestCase):
+    def setUp(self):
+        subset = stage_class({'set_hall_ui_hidden', 'toggle_hall_ui', 'confirm_exit',
+                              'set_hall_crosshair'})
+        ast.fix_missing_locations(subset)
+        self.elements = {'a': NS(visible=True), 'b': NS(visible=False), 'c': NS(visible=True)}
+        self.hall = NS(chat_open=False, parts={'navigation': NS(visible=True),
+                                               'toolbar': NS(visible=True),
+                                               'chat': NS(visible=True)})
+        self.sysbox = NS(show_array=[], double_btn=Mock())
+        self.ring = NS(visible=True)
+        namespace = {'guiManager': NS(instance=lambda: NS(elements=self.elements)),
+                     'BigWorld': NS(player=lambda: NS(aim=NS(ring=self.ring))),
+                     'SysBox': NS(instance=lambda: self.sysbox, double_btn=self.sysbox.double_btn)}
+        exec(compile(subset, str(STAGE), 'exec'), namespace)
+        self.stage = namespace['Stage']()
+        self.stage.hall = self.hall
+        self.stage.runtime = NS(practice=None, write_status=Mock())
+        self.stage.log = Mock()
+        self.stage.visible = False
+        self.stage.closed = False
+        self.stage.hall_ui_hidden = False
+        self.stage.ui_snapshot = {}
+        self.stage.hall_combat = False
+
+    def test_no_ui_hides_every_visible_element_and_restores_the_same_set(self):
+        self.stage.hall_combat = True
+        self.stage.set_hall_ui_hidden(True)
+        self.assertTrue(self.stage.hall_ui_hidden)
+        self.assertFalse(self.elements['a'].visible)
+        self.assertFalse(self.elements['c'].visible)
+        self.assertFalse(self.elements['b'].visible)
+        self.assertFalse(self.hall.parts['chat'].visible)
+        self.assertFalse(self.ring.visible)
+        self.assertEqual(sorted(self.stage.ui_snapshot), ['a', 'c'])
+        self.stage.set_hall_ui_hidden(False)
+        self.assertFalse(self.stage.hall_ui_hidden)
+        self.assertTrue(self.elements['a'].visible)
+        self.assertTrue(self.elements['c'].visible)
+        self.assertFalse(self.elements['b'].visible)
+        self.assertTrue(self.hall.parts['chat'].visible)
+        self.assertTrue(self.ring.visible)
+
+    def test_no_ui_in_peacetime_leaves_the_hidden_crosshair_alone(self):
+        self.stage.hall_combat = False
+        self.ring.visible = False
+        self.stage.set_hall_ui_hidden(True)
+        self.stage.set_hall_ui_hidden(False)
+        self.assertFalse(self.ring.visible)
+
+    def test_repeated_hide_or_show_is_a_no_op(self):
+        self.stage.set_hall_ui_hidden(True)
+        self.stage.runtime.write_status.reset_mock()
+        self.stage.set_hall_ui_hidden(True)
+        self.stage.runtime.write_status.assert_not_called()
+
+    def test_toggle_refuses_while_chat_or_training_is_open(self):
+        self.hall.chat_open = True
+        self.assertFalse(self.stage.toggle_hall_ui())
+        self.assertFalse(self.stage.hall_ui_hidden)
+        self.hall.chat_open = False
+        self.stage.runtime.practice = NS(engaged=True)
+        self.assertFalse(self.stage.toggle_hall_ui())
+        self.stage.runtime.practice = None
+        self.assertTrue(self.stage.toggle_hall_ui())
+        self.assertTrue(self.stage.hall_ui_hidden)
+        self.assertTrue(self.stage.toggle_hall_ui())
+        self.assertFalse(self.stage.hall_ui_hidden)
+
+    def test_escape_leaves_combat_before_opening_the_exit_box(self):
+        self.stage.hall_combat = True
+        self.stage.toggle_hall_combat = Mock()
+        self.stage.confirm_exit()
+        self.stage.toggle_hall_combat.assert_called_once_with(False)
+        self.sysbox.double_btn.assert_not_called()
 
 
 class CooldownButtonTests(unittest.TestCase):

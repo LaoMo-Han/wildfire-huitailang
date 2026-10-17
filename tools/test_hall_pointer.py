@@ -59,6 +59,8 @@ class PointerTests(unittest.TestCase):
         self.stage.hall_combat = False
         self.stage.log = Mock()
         self.stage.sync_input_mode = Mock()
+        self.stage.capture_hall_camera = Mock()
+        self.stage.restore_hall_control = Mock()
         self.stage.runtime = NS(practice=None, settings=None, bag=None, write_status=Mock())
         self.ui = NS(handleKeyEvent=Mock(return_value=False))
         self.gui = NS(handleKeyEvent=Mock(return_value=False))
@@ -112,7 +114,8 @@ class PointerTests(unittest.TestCase):
         self.assertTrue(self.key(True, 15))
         self.assertTrue(self.key(False, 15))
         self.assertFalse(self.stage.hall_combat)
-        self.stage.sync_input_mode.assert_called_once()
+        self.stage.capture_hall_camera.assert_called_once()
+        self.stage.restore_hall_control.assert_called_once()
         self.stage.hall.refresh_hints.assert_called()
 
     def test_tab_starts_combat_only_once_per_press(self):
@@ -139,6 +142,42 @@ class PointerTests(unittest.TestCase):
         self.key(True, 30)
         native.assert_called_once()
         self.player.handle_key_event.assert_not_called()
+
+    def test_combat_mouse_uses_native_aim_without_drag(self):
+        self.stage.hall_combat = True
+        self.stage.cursor_shown = False
+        self.stage.combat_key_cache = set([256])
+        self.key(True)
+        self.key(False)
+        self.assertFalse(self.stage.hall_mouse_buttons)
+        self.assertEqual([call.args for call in self.player.handle_key_event.call_args_list],
+                         [(True, 256, 0), (False, 256, 0)])
+        self.ui.handleKeyEvent.assert_not_called()
+
+    def test_combat_mode_hides_cursor_and_uses_battle_input(self):
+        self.stage.visible = False
+        self.stage.hall.chat_open = False
+        self.stage.sync_input_mode = type(self.stage).sync_input_mode.__get__(
+            self.stage, type(self.stage))
+        fsm_module = self.stage.sync_input_mode.__globals__['FsmGame']
+        fsm_module.MOD_NOML, fsm_module.MOD_CITY, fsm_module.MOD_HERO = 0, 2, 1
+        fsm_module.set_hero_only_move = Mock()
+        self.fsm.mode = 2
+        self.stage.hall_combat = True
+        self.assertTrue(self.stage.sync_input_mode())
+        self.assertFalse(self.stage.cursor_shown)
+        self.assertEqual(self.fsm.mode, 1)
+        fsm_module.set_hero_only_move.assert_called_once_with(False)
+        self.bw.sendMouseMovementToScript.assert_called_once_with(True)
+
+    def test_hide_ui_key_toggles_hall_ui(self):
+        self.stage.toggle_hall_ui = Mock()
+        self.keys.KEY_H = 72
+        self.assertTrue(self.key(True, 72))
+        self.stage.toggle_hall_ui.assert_called_once()
+        self.stage.toggle_hall_ui.reset_mock()
+        self.key(False, 72)
+        self.stage.toggle_hall_ui.assert_not_called()
 
     def test_world_release_reaches_player_once_when_ui_consumes_release(self):
         self.stage.hall_combat = True

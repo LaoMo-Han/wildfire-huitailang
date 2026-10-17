@@ -172,16 +172,16 @@ class OfflineHall(object):
             return
         self.hero_page.stop_hall_drag()
         self.hero_page.capture_hall_camera()
+        # Chat needs the chat box and cursor back, even from no-UI or combat.
+        self.hero_page.set_hall_ui_hidden(False)
         self.heroes.close_bag()
         self.chat_open = True
         self.chat_return_visible = self.chat_panel.visible
         self.chat_panel.visible = True
         for name in ['show_content', 'con_list', 'img_bg']:
             getattr(self.chat_panel, name).visible = True
-        FsmGame.set_hero_only_move(True)
-        FsmGame.init().mode = FsmGame.MOD_NOML
+        self.hero_page.sync_input_mode()
         self.chat_panel.chat_edit.active = True
-        self.hero_page.cursor_shown = True
         self.set_hint_layout(True)
         self.refresh_hints()
 

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "version": "2026.10.17.1",
-  "build": 6,
+  "version": "2026.10.18.1",
+  "build": 7,
   "base_client": "1.0.192",
-  "notes": "大厅操作、光标与练习场修复\n\n• 修复菜单单击失效、拖动后按钮不响应，以及关闭设置后光标消失的问题。\n• 大厅光标常驻，取消 Ctrl 切换；左键拖动只转镜头，右键拖动同时改变人物朝向。松开保留视角。\n• 练习场默认隐藏光标，回车打开聊天时显示，再次回车关闭并恢复战斗输入。\n• 大厅移除准心和队伍框，检查更新、反馈 Bug 移入右上角设置。启动静默检查，无更新或失败不提示、不阻断单机。\n• 大厅使用地面出生点，地图选择增加中文名称；包含本轮练习场技能填充、冷却、召唤物及旧客户端兼容修复。部分英雄和地图仍未逐一验证。\n\n首版升级方法：完全退出游戏和旧启动器，下载 wildfire-patch-2026.10.17.1.zip，全部解压到原客户端根目录并替换文件。不要解压到 game 子目录。之后双击新的“开始游戏.exe”，即已带有更新器，无需逐个安装历史版本。\n已有更新器的玩家可在右上角设置中检查更新。此包不包含游戏本体素材，不覆盖个人画面设置、界面偏好或离线档案。\n",
-  "published_at": "2026-10-17T02:02:44.144171+00:00",
+  "notes": "大厅战斗状态、聊天提示与源力复制体\n\n• 大厅按 Tab 在战斗/非战斗之间切换：非战斗时空白处鼠标只拖动视角、不会释放技能；战斗时改为练习场的输入逻辑，隐藏光标、显示准星（大厅准星为原版的一半大小），鼠标移动转动视角。Esc 在战斗中先返回非战斗。\n• 大厅左下角原版聊天框显示全部操作说明；回车展开聊天时提示移到右侧，收起后回到原位。\n• 新增无 UI 模式：按 H 隐藏/显示全部界面（含顶部导航、右下工具栏、聊天框和战斗准星）。\n• 英雄页和时装页点“源力塑形”会在角色脚下生成当前模型的复制体，可以生成多个、互不影响，最多 12 个；切换英雄或换装不会改变已生成的复制体，进入练习场或换图后清理。\n• 练习场“无CD”按钮移到“选择地图”右侧，两个按钮都保持在屏幕内。\n\n首版升级方法：完全退出游戏和旧启动器，下载 wildfire-huitailang-2026.10.18.1.zip，全部解压到原客户端根目录并替换文件。不要解压到 game 子目录。之后双击新的“开始游戏.exe”，即已带有更新器，无需逐个安装历史版本。\n已有更新器的玩家可在右上角设置中检查更新。此包不包含游戏本体素材，不覆盖个人画面设置、界面偏好或离线档案。\n",
+  "published_at": "2026-10-17T16:24:39.168874+00:00",
   "components": [
     {
       "name": "core-2026.10.14.1.zip",
@@ -18,37 +18,36 @@
       }
     },
     {
-      "name": "runtime-2026.10.17.1.zip",
-      "url": "https://github.com/LaoMo-Han/wildfire-downloads/releases/download/v2026.10.17.1/runtime-2026.10.17.1.zip",
-      "size": 50200,
-      "sha256": "e62fcf2cb9a50d1fab8b0550af1e3320c04840f89c18e33ff928e45af82b31a7",
+      "name": "runtime-2026.10.18.1.zip",
+      "url": "https://github.com/LaoMo-Han/wildfire-downloads/releases/download/v2026.10.18.1/runtime-2026.10.18.1.zip",
+      "size": 56663,
+      "sha256": "e9553838aa967142d0055b5eaa1d4563c52a07fe226aac6329a695d582d78f1b",
       "id": "runtime",
       "files": {
         "bootstrap/EditorConf.py": "c76150d280a2d9bf92810e1af7c934853cc7c8c1523f68ecc7ebde445a394b31",
         "res/editor/client/EditorConf.py": "c76150d280a2d9bf92810e1af7c934853cc7c8c1523f68ecc7ebde445a394b31",
-        "res/editor/client/hero_stage.py": "77f5825237487a8a8d9950c575d4ac10d7832906864934be506281155781a1b4",
+        "res/editor/client/hero_stage.py": "25e097b1703f3b79968a2ae0a920b3c9fe10f274a71eee3f5b53ca2cf521ab4f",
         "res/editor/client/offline_bag.py": "2f5359d7941c4e197b1bb93b6b7d73cd34164e979c4640086f4e4783e0e0b48c",
-        "res/editor/client/offline_combat.py": "e332fd9d7974150674e364138ef0013ed7ca0a86c3692e4f94fa9f3beb051834",
+        "res/editor/client/offline_combat.py": "1b4e7f7ee242ef114b0c93a1ee67be0fd686d71b1a0747da10373a11a71fa740",
         "res/editor/client/offline_compat.py": "8e45034df8a19e7cb897728298433eff7243f02cdb5660ac85a501c6d5e07f1e",
-        "res/editor/client/offline_hall.py": "d2912a0443801cff72fbb3b25905c5a0840d78e4bcf3096d5ceaf741aa532b06",
-        "res/editor/client/offline_practice.py": "5e951f8cd4320cfeb2420a5c4832ca1e9421711b1c90efb121ec0c8a131f3b72",
-        "res/editor/client/offline_runtime.py": "a0b07fb6ea373bddfdd44918030f6daa7dd4a6ceb87a38d1aad0169d8a66913e",
+        "res/editor/client/offline_hall.py": "2206696189944871be5866234781769357b5437810ff38ecd534196affa32d63",
+        "res/editor/client/offline_practice.py": "561b2f0afa141ec8c63d3944d25e1930c253ca64f43b863fb390298401c43802",
+        "res/editor/client/offline_runtime.py": "12e583f98fb113f866fbb64afc9e52613548e65b599ee540d2700ab593ef98da",
         "res/editor/client/offline_settings.py": "4d06609442452987e644a9453945673da3fe0ad5cb3a97cf13729d7817e83b4e",
         "res/editor/client/offline_spawn.py": "7a9d3e2f749ac4df1ac18a4a064f065719d0521e6e4de6e440b162a269a934be",
-        "res/editor/client/offline_updates.py": "ad043de3759d7a1fe1733188aa3efa9f6e727e1cb3a21f3def69b42be31dbd96",
-        "res/editor/client/saber_mod.py": "6c1b1fad707505f17eec344ec70e6c2cdd855a418d68c14ceaa5dd208e63bda8"
+        "res/editor/client/offline_updates.py": "ad043de3759d7a1fe1733188aa3efa9f6e727e1cb3a21f3def69b42be31dbd96"
       }
     },
     {
-      "name": "launcher-2026.10.17.1.zip",
-      "url": "https://github.com/LaoMo-Han/wildfire-downloads/releases/download/v2026.10.17.1/launcher-2026.10.17.1.zip",
-      "size": 32807,
-      "sha256": "df810bfeae921a5283f8801cac4aa94dc5b6b389a0383352e27f4d62819164ae",
+      "name": "launcher-2026.10.18.1.zip",
+      "url": "https://github.com/LaoMo-Han/wildfire-downloads/releases/download/v2026.10.18.1/launcher-2026.10.18.1.zip",
+      "size": 32805,
+      "sha256": "1ef5d0afec4b9016434915b0f3d5d873f6dcaafd7a5554d11a8bf3a3561eddf7",
       "id": "launcher",
       "files": {
-        "launch.exe": "8587d4dc816e63e9741df70e4e3a90cab4d7b1c036e1570e7965fc260e168412",
-        "update.exe": "d00579418d7b3f1db22df183346c4ddbe8c1dc1082a5058e19db63d1b10ffc3a",
-        "开始游戏.exe": "f791f0af2e962bdfbca82abc0ef665af096cc0ffb17e6770b5573c637abf15bd",
+        "launch.exe": "5c29931a62e77132af8af4882934a8ec6a989c8d76497567a2443bd14d291e62",
+        "update.exe": "33f0dbcd9e0e8d0c6adcb02216945b8b915c80b75b798394dda1ea2ca78c035b",
+        "开始游戏.exe": "b3300dcfb2cb2efa498adb97d6326cb2a01521ca8cfe7743fd54a8c3b3c0a2e4",
         "start_offline.cmd": "f1b3cccc92cc33f307acb862fbc74d15e70d63bb7d4816abc442df3883f92d78",
         "launch.exe.config": "8ee9fa75402de2195e8a7cf27d3b48961703babbbe2d42fc158beb07dafe0301",
         "update.exe.config": "8ee9fa75402de2195e8a7cf27d3b48961703babbbe2d42fc158beb07dafe0301",
@@ -90,9 +89,9 @@
     }
   ],
   "manual_patch": {
-    "name": "wildfire-patch-2026.10.17.1.zip",
-    "url": "https://github.com/LaoMo-Han/wildfire-downloads/releases/download/v2026.10.17.1/wildfire-patch-2026.10.17.1.zip",
-    "size": 40265716,
-    "sha256": "b50be9fbc5b28c2b259d97a92abc82c04b05d7e35434adbebfb5c1b478ea5b15"
+    "name": "wildfire-huitailang-2026.10.18.1.zip",
+    "url": "https://github.com/LaoMo-Han/wildfire-downloads/releases/download/v2026.10.18.1/wildfire-huitailang-2026.10.18.1.zip",
+    "size": 40272242,
+    "sha256": "407971374d4b34224b36d3c9e3f77e5e9c50c9eda3a01a090b4f557622e17508"
   }
 }

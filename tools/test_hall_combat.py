@@ -286,6 +286,51 @@ class UiHideTests(unittest.TestCase):
         self.sysbox.double_btn.assert_not_called()
 
 
+class CrosshairTests(unittest.TestCase):
+    def setUp(self):
+        subset = stage_class({'set_hall_crosshair', 'enforce_hall_crosshair', 'center_hall_cursor'})
+        ast.fix_missing_locations(subset)
+        self.ring = NS(visible=True, scale=1.0)
+        self.player = NS(aim=NS(ring=self.ring))
+        namespace = {'BigWorld': NS(getScreenSize=lambda: (2560, 1440),
+                                    player=lambda: self.player)}
+        exec(compile(subset, str(STAGE), 'exec'), namespace)
+        self.stage = namespace['Stage']()
+        self.stage.hall_combat = True
+        self.ui = NS(cursor_pos=Mock(), set_cursor_pos=Mock())
+        modules = patch.dict(sys.modules, {'C_ui': self.ui})
+        modules.start()
+        self.addCleanup(modules.stop)
+
+    def test_crosshair_is_half_size_when_shown_or_hidden(self):
+        self.assertTrue(self.stage.set_hall_crosshair(True))
+        self.assertEqual(self.ring.scale, 0.5)
+        self.assertTrue(self.ring.visible)
+        self.stage.set_hall_crosshair(False)
+        self.assertFalse(self.ring.visible)
+        self.assertEqual(self.ring.scale, 0.5)
+
+    def test_enforce_resets_a_native_size_only_during_hall_combat(self):
+        self.ring.scale = 1.0
+        self.stage.enforce_hall_crosshair()
+        self.assertEqual(self.ring.scale, 0.5)
+        self.ring.scale = 1.0
+        self.stage.hall_combat = False
+        self.stage.enforce_hall_crosshair()
+        self.assertEqual(self.ring.scale, 1.0)
+
+    def test_enforce_leaves_a_hidden_crosshair_alone(self):
+        self.ring.visible = False
+        self.ring.scale = 1.0
+        self.stage.enforce_hall_crosshair()
+        self.assertEqual(self.ring.scale, 1.0)
+
+    def test_leaving_combat_centers_the_cursor(self):
+        self.assertEqual(self.stage.center_hall_cursor(), (1280.0, 720.0))
+        self.ui.cursor_pos.assert_called_once_with(1280.0, 720.0)
+        self.ui.set_cursor_pos.assert_called_once_with(1280.0, 720.0)
+
+
 class CooldownButtonTests(unittest.TestCase):
     def test_no_cooldown_switch_sits_right_of_map_selector(self):
         subset = ast.Module(body=functions(PRACTICE, {'cooldown_button_position'}), type_ignores=[])

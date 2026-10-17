@@ -11,7 +11,7 @@ SOURCE = Path(__file__).resolve().parent.parent/'runtime/hero_stage.py'
 METHODS = {'handle_menu_key_impl', 'handle_hall_mouse_key', 'stop_hall_drag',
            'poll_hall_drag', 'update_hall_drag', 'rotate_hall_view', 'handle_world_mouse',
            'sync_input_mode', 'handle_world_key', 'handle_app_active', 'finish_focus_restore',
-           'toggle_hall_combat', 'combat_keys'}
+           'toggle_hall_combat', 'combat_keys', 'center_hall_cursor'}
 tree = ast.parse(SOURCE.read_text(encoding='utf-8'))
 original = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'HeroStage')
 subset = ast.Module(body=[ast.ClassDef(name='Pointer', bases=[], keywords=[],
@@ -32,6 +32,7 @@ class PointerTests(unittest.TestCase):
                        KEY_LCONTROL=17, KEY_RCONTROL=18, KEY_ESCAPE=27, KEY_RETURN=13,
                        KEY_Z=90, KEY_X=88, KEY_C=67, KEY_V=86, KEY_B=66)
         self.bw = NS(getCursorPos=lambda: tuple(self.position),
+                     getScreenSize=lambda: (2560, 1440),
                      callback=lambda delay, fn: self.callbacks.append(fn),
                      player=lambda: self.player, dcursor=lambda: self.cursor,
                      sendMouseMovementToScript=Mock())
@@ -62,7 +63,9 @@ class PointerTests(unittest.TestCase):
         self.stage.capture_hall_camera = Mock()
         self.stage.restore_hall_control = Mock()
         self.stage.runtime = NS(practice=None, settings=None, bag=None, write_status=Mock())
-        self.ui = NS(handleKeyEvent=Mock(return_value=False))
+        self.ui = NS(handleKeyEvent=Mock(return_value=False),
+                     cursor_pos=Mock(), set_cursor_pos=Mock(),
+                     get_cursor_pos=lambda: tuple(self.position))
         self.gui = NS(handleKeyEvent=Mock(return_value=False))
         self.modules = patch.dict(sys.modules, {'C_ui': self.ui, 'GUI': self.gui})
         self.modules.start()
@@ -117,6 +120,13 @@ class PointerTests(unittest.TestCase):
         self.stage.capture_hall_camera.assert_called_once()
         self.stage.restore_hall_control.assert_called_once()
         self.stage.hall.refresh_hints.assert_called()
+        self.ui.cursor_pos.assert_called_once_with(1280, 720)
+        self.ui.set_cursor_pos.assert_called_once_with(1280, 720)
+
+    def test_entering_combat_does_not_recenter_the_cursor(self):
+        self.assertTrue(self.key(True, 15))
+        self.assertTrue(self.stage.hall_combat)
+        self.ui.cursor_pos.assert_not_called()
 
     def test_tab_starts_combat_only_once_per_press(self):
         self.assertTrue(self.key(True, 15))

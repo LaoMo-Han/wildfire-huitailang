@@ -288,6 +288,8 @@ class LocalShare(SharePhase.SharePhase):
 
 class HeroStage(object):
     CLONE_LIMIT = 12
+    # The hall combat reticle is half the native training-arena size.
+    CROSSHAIR_SCALE = 0.5
 
     def __init__(self, hall, runtime, log):
         self.hall, self.runtime, self.log = hall, runtime, log
@@ -584,6 +586,8 @@ class HeroStage(object):
             # Combat keeps the native aim/crosshair bound; closing chat or the
             # bag must not leave the hall without it.
             player.aim.active()
+            if getattr(self, 'hall_combat', False):
+                self.set_hall_crosshair(True)
         return fighting
 
     def restore_hall_control(self):
@@ -620,6 +624,8 @@ class HeroStage(object):
             # Changing heroes can replace Aim without activating a new camera.
             # Rebind its native pitch/depth matrix even when bc stayed current.
             BigWorld.player().aim.active()
+            if getattr(self, 'hall_combat', False):
+                self.set_hall_crosshair(True)
         elif hasattr(BigWorld.player(), 'aim'):
             BigWorld.player().aim.enabled(False)
 
@@ -1046,7 +1052,9 @@ class HeroStage(object):
         # the native battle camera while fighting, then the city cursor again.
         self.capture_hall_camera()
         self.restore_hall_control()
-        if getattr(self, 'hall_ui_hidden', False):
+        if not self.hall_combat:
+            self.center_hall_cursor()
+        elif getattr(self, 'hall_ui_hidden', False):
             self.set_hall_crosshair(False)
         self.hall.refresh_hints()
         self.log('Hall combat mode: '+str(self.hall_combat))
@@ -1061,10 +1069,36 @@ class HeroStage(object):
         if ring is None:
             return False
         try:
+            ring.scale = self.CROSSHAIR_SCALE
             ring.visible = bool(visible)
         except Exception:
             return False
         return True
+
+    def enforce_hall_crosshair(self):
+        if not bool(getattr(self, 'hall_combat', False)):
+            return
+        aim = getattr(BigWorld.player(), 'aim', None)
+        ring = getattr(aim, 'ring', None) if aim is not None else None
+        if ring is None or not getattr(ring, 'visible', False):
+            return
+        try:
+            if abs(float(ring.scale)-self.CROSSHAIR_SCALE) > 0.01:
+                ring.scale = self.CROSSHAIR_SCALE
+        except Exception:
+            pass
+
+    def center_hall_cursor(self):
+        """Leaving combat puts the UI cursor back at the middle of the screen."""
+        try:
+            width, height = BigWorld.getScreenSize()
+            position = (width/2, height/2)
+            import C_ui
+            C_ui.cursor_pos(*position)
+            C_ui.set_cursor_pos(*position)
+            return position
+        except Exception:
+            return None
 
     def set_hall_ui_hidden(self, hidden):
         hidden = bool(hidden)
@@ -1256,6 +1290,9 @@ class HeroStage(object):
         self.maintain_source_clones()
         practice = getattr(self.runtime, 'practice', None)
         hall_fighting = bool(getattr(self, 'hall_combat', False)) and not getattr(self, 'cursor_shown', True)
+        if hall_fighting:
+            # Aim re-activation can restore the native reticle size.
+            self.enforce_hall_crosshair()
         if (practice is None or not practice.active) and not hall_fighting:
             aim = getattr(BigWorld.player(), 'aim', None)
             if aim is not None:

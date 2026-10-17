@@ -26,3 +26,12 @@
 - 实机打开聊天后光标恢复（`(-10000,-10000)`、`mode=0`），关闭后回到隐藏光标与 `mode=1`，相机保持正常。
 - 实机 H：`visible_gui()` 从 8 项变为 0，导航/工具栏/聊天框隐藏，战斗准心消失，相机俯仰保持 0；再按 H 全部恢复，准心与 `visible_gui()` 回到 8 项；Tab 返回非战斗后光标恢复、准心关闭。
 - 截图：`C:\wildfire-gpt\analysis\shot_combat_final.png`、`shot_noui_final.png`、`shot_peace_final.png`、`shot_ui_restored.png`。
+
+## 准星缩放与退出战斗的光标位置（同日追加）
+
+- 大厅战斗准星缩到原生的一半：`aim.ring.scale = 0.5`（100×100 → 50×50）。Aim 激活、聊天/背包关闭恢复战斗、从无 UI 恢复时都会重新应用；大厅 tick 每 0.5 秒检查一次，防止原版 Aim 把尺寸改回 1.0。
+- 只在 `hall_combat` 时缩放；练习场准心保持原版大小。无 UI 模式只是把准心隐藏，不改尺寸。
+- 关闭战斗模式（Tab 或 Esc）后光标落到屏幕正中：取 `BigWorld.getScreenSize()/2`（本机 2560×1440 → 1280,720），同时调用 `C_ui.cursor_pos` 与 `C_ui.set_cursor_pos`，保证引擎与系统光标都在同一位置。进入战斗不修改光标位置。
+- 实机复测：进入战斗后 `ring.width/height = 50/50`、`scale = 0.5`；退出战斗后 `BigWorld.getCursorPos()` 与 `C_ui.get_cursor_pos()` 均为 `(1280, 720)`，准心隐藏。
+- `python -m unittest discover -s tools -p "test_*.py"`：93 项通过（新增 5 项：准星缩放、尺寸守卫、隐藏时不改尺寸、退出战斗居中、进入战斗不居中）。
+- 截图：`C:\wildfire-gpt\analysis\shot_crosshair_half.png`。

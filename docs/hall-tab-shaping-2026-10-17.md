@@ -34,8 +34,9 @@
 ## 验证
 
 - `python -m unittest discover -s tools -p "test_*.py"`：79 项通过。新增 20 项覆盖 Tab 单次切换、战斗中鼠标/技能键转发、非战斗不转发、提示文本随状态变化与聊天展开后的提示右移、复制体环形排布/上限/回血/清理、无 CD 按钮位置。
-- 实机（1280×720 窗口，真实引擎）：Tab 切换使 `hero_only_move` 在 True/False 之间变化；非战斗点击不增加 `skill_session_no`，战斗状态 Q 与左键各增加一次；聊天框 8 行提示实际渲染。
-- 实机在英雄页依次对英雄 7、英雄 4 点“源力塑形”，生成两个独立 `PracticeAIHero`：时装分别为 `[160261, 175174, 180702, 180701]` 与 `[160204]`，位置在人物两侧，关闭页面后仍保留，数量提示变为 2/12。
-- 实机练习场顶栏：`选择地图` 绝对 X=1097、宽 156，“无CD”在其右侧；进入练习场后大厅提示随 HUD 隐藏。
+- 实机（1280×720 窗口，真实引擎）：Tab 切换使 `hero_only_move` 在 True/False 之间变化；非战斗点击不增加 `skill_session_no`，战斗状态 Q 与左键各增加一次；聊天框 8 行提示实际渲染，回车展开聊天后提示整体右移到 X=540，最后一行改为聊天提示，收起后回到 X=96。
+- 实机在英雄页对英雄 7 点“源力塑形”生成复制体，时装分别为当前的 `[160261, 175174, 180702, 180701]`；另一轮在时装页选中并装备另一套时装（`160040`）后再点塑形，生成第二个复制体且大厅人物同步换装。两个复制体位置不同、各自保留生成时的模型，关闭页面后仍保留，数量提示变为 2/12。
+- 实机练习场顶栏：`选择地图` 绝对 X=937、宽 156，“无CD”紧随其后位于 X=1097、宽 156，两者都在屏幕内；进入练习场后大厅提示随 HUD 隐藏，返回大厅后提示与计数恢复。
+- 冷启动后大厅为非战斗状态、光标可见、复制体 0/12，`last_error`、`hall_errors`、`stage.errors`、`practice.errors` 均为空。
 
-截图与探针结果保存在 `C:\wildfire-gpt\analysis`（`shot_hall_hints.png`、`shot_clones_hall.png`、`shot_practice_toolbar.png` 等）。
+截图与探针结果保存在 `C:\wildfire-gpt\analysis`（`shot_delivered.png`、`shot_final_chat.png`、`shot_verify_practice.png`、`shot_verify_clones.png` 等）。

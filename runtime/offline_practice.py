@@ -43,6 +43,7 @@ class LocalPractice(object):
     def __init__(self, runtime):
         self.runtime = runtime
         self.active = False
+        self.no_cooldown = False
         self.loading = False
         self.entry = None
         self.target_id = None
@@ -78,6 +79,7 @@ class LocalPractice(object):
         self.install_difficulty_buttons()
         self.install_toolbar_buttons()
         self.disable_debug_map_keys()
+        self.enable_cooldowns()
         BigWorld.callback(0.25, self.tick)
 
     @property
@@ -375,7 +377,25 @@ class LocalPractice(object):
         # never receives the server's initial ready cooldown set.
         for skill_id, duration in manager.dict_base_cd.items():
             manager.dict_now_cd.setdefault(skill_id, (0, duration))
-        BigWorld.player().test_do_cd_check = True
+        BigWorld.player().test_do_cd_check = not self.cooldowns_disabled()
+
+    def cooldowns_disabled(self):
+        return FsmGame.state_is_offline() and (not self.active or getattr(self, 'no_cooldown', False))
+
+    def toggle_no_cooldown(self):
+        if not self.active or self.loading:
+            return
+        self.no_cooldown = not getattr(self, 'no_cooldown', False)
+        from captain import cdmgr
+        cdmgr.reset()
+        self.enable_cooldowns()
+        guiManager.get_ui('battle_skill').update_cd()
+        self.update_cooldown_button()
+        self.runtime.write_status()
+
+    def update_cooldown_button(self):
+        self.cooldown_button.text = (u'\u65e0CD\uff1a\u5f00 F7' if getattr(self, 'no_cooldown', False)
+                                     else u'\u65e0CD\uff1a\u5173 F7').encode('gbk')
 
     def toolbar_action(self, action):
         if not self.active or self.loading:
@@ -399,6 +419,8 @@ class LocalPractice(object):
                 self.toggle_ai()
             elif action == 'reset':
                 self.reset()
+            elif action == 'no_cooldown':
+                self.toggle_no_cooldown()
             self.runtime.hall.hero_page.restore_hall_control()
         self.guard('toolbar', run)
         self.runtime.write_status()
@@ -424,6 +446,12 @@ class LocalPractice(object):
             self.map_button = xnui.XButton(self.toolbar, last.coord[0]+last.width+4, last.coord[1],
                 rc.COMMON_BTN_RECT_BIG, u'\u9009\u62e9\u5730\u56fe'.encode('gbk'))
         self.map_button.event_click = lambda sender: self.toggle_maps()
+        if not hasattr(self, 'cooldown_button'):
+            first = self.toolbar.btn_show_hint
+            self.cooldown_button = xnui.XButton(self.toolbar, first.coord[0], first.coord[1]+first.height+4,
+                rc.COMMON_BTN_RECT_BIG, '')
+        self.cooldown_button.event_click = lambda sender: self.toolbar_action('no_cooldown')
+        self.update_cooldown_button()
 
     def toggle_maps(self):
         if not self.active or self.loading:
@@ -681,6 +709,17 @@ class LocalPractice(object):
         Hero.getMaxLevel = get_max_level
 
     def install_skill_hook(self):
+        from captain import cdmgr
+        owner = self
+        if not hasattr(cdmgr, '_offline_original_update'):
+            cdmgr._offline_original_update = cdmgr.update
+        def update(skill_id, cd, use_time):
+            # Keep the HUD and readiness clock in agreement, including skills
+            # whose cooldown begins at the end of a channel or via hero hooks.
+            if owner.cooldowns_disabled():
+                use_time = 0
+            return cdmgr._offline_original_update(skill_id, cd, use_time)
+        cdmgr.update = update
         from guis.battle.PracticeSpPart import SpaceBox
         owner = self
         if not hasattr(SpaceBox, '_offline_original_click'):
@@ -961,6 +1000,7 @@ class LocalPractice(object):
                    keys.KEY_F4:lambda: self.toolbar_action(3),
                    keys.KEY_F5:lambda: self.toolbar_action(4),
                    keys.KEY_F6:lambda: self.toolbar_action('combo'),
+                   keys.KEY_F7:lambda: self.toolbar_action('no_cooldown'),
                    keys.KEY_B:lambda: self.reset(bool(mods & keys.MODIFIER_SHIFT)),
                    keys.KEY_Y:self.toggle_ai,
                    keys.KEY_P:self.toggle_attributes,
@@ -986,7 +1026,7 @@ class LocalPractice(object):
         self.runtime.write_status()
 
     def tick(self):
-        if self.active and not self.loading:
+        if self.combat.enabled():
             self.guard('combat', self.combat.tick)
         if self.active and not self.loading:
             def update():
@@ -1057,6 +1097,10 @@ class LocalPractice(object):
             stage = self.runtime.hall.hero_page
             stage.__class__ = stage_context['HeroStage']
             stage.install_view_controls()
+            stage.menu_key_listener = stage.handle_menu_key
+            FsmGame.init().exclusive_key_listener = stage.menu_key_listener
+            stage.active_handler = stage.handle_app_active
+            FsmGame.active = stage.active_handler
             from system import camera
             stage.camera_mouse_handler = stage.handle_camera_mouse
             camera.bc.handle_mouse_event = stage.camera_mouse_handler
@@ -1152,6 +1196,7 @@ class LocalPractice(object):
     def status(self):
         target = self.get_target()
         return {'active':self.active, 'loading':self.loading,
+                'no_cooldown':getattr(self, 'no_cooldown', False),
                 'entry_visible':bool(self.entry is not None and self.entry.visible),
                 'scene':ClientUtils.get_scene_name(), 'target_id':self.target_id,
                 'target_type':self.target_type, 'damage':self.helper.damage_accumulation,

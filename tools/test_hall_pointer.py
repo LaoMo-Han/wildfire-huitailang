@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 SOURCE = Path(__file__).resolve().parent.parent/'runtime/hero_stage.py'
 METHODS = {'handle_menu_key_impl', 'handle_hall_mouse_key', 'stop_hall_drag',
            'poll_hall_drag', 'update_hall_drag', 'rotate_hall_view', 'handle_world_mouse',
-           'sync_input_mode'}
+           'sync_input_mode', 'handle_world_key', 'handle_app_active', 'finish_focus_restore'}
 tree = ast.parse(SOURCE.read_text(encoding='utf-8'))
 original = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'HeroStage')
 subset = ast.Module(body=[ast.ClassDef(name='Pointer', bases=[], keywords=[],
@@ -25,7 +25,7 @@ class PointerTests(unittest.TestCase):
         self.callbacks = []
         self.cursor = NS(yaw=0., pitch=0., minPitch=-1.5, maxPitch=1.5,
                          mouseSensitivity=.003, invertVerticalMovement=False)
-        self.player = NS(model=NS(yaw=.4, bh=NS(bh_yaw=.4, yaw_enable=True)))
+        self.player = NS(model=NS(yaw=.4, bh=NS(bh_yaw=.4, yaw_enable=True)), handle_key_event=Mock())
         self.keys = NS(KEY_LEFTMOUSE=256, KEY_RIGHTMOUSE=257)
         self.bw = NS(getCursorPos=lambda: tuple(self.position),
                      callback=lambda delay, fn: self.callbacks.append(fn),
@@ -62,6 +62,7 @@ class PointerTests(unittest.TestCase):
         self.assertFalse(self.stage.hall_mouse_buttons)
         self.assertFalse(self.callbacks)
         self.assertEqual(self.cursor.yaw, 0.)
+        self.player.handle_key_event.assert_not_called()
 
     def test_release_after_world_drag_still_reaches_native_ui(self):
         self.key(True)
@@ -81,6 +82,59 @@ class PointerTests(unittest.TestCase):
         self.key(False)
         self.assertEqual(self.cursor.yaw, 0.)
         self.assertEqual(self.player.model.bh.bh_yaw, .4)
+        self.assertEqual([call.args for call in self.player.handle_key_event.call_args_list],
+                         [(True, 256, 0), (False, 256, 0)])
+
+    def test_world_release_reaches_player_even_if_ui_consumes_release(self):
+        self.key(True)
+        self.ui.handleKeyEvent.return_value = True
+        self.key(False)
+        self.assertEqual(self.player.handle_key_event.call_count, 2)
+        self.assertEqual(self.player.handle_key_event.call_args.args, (False, 256, 0))
+
+    def test_native_none_for_consumed_event_does_not_escape_to_window_drag(self):
+        tw2 = NS(enable_drag_area=Mock())
+        def native(*args):
+            self.stage.menu_key_handled = True
+            return None
+        self.fsm._offline_original_world_key = native
+        with patch.dict(sys.modules, {'tw2':tw2}):
+            self.assertTrue(self.stage.handle_world_key(True, 256, 1, 0))
+        tw2.enable_drag_area.assert_called_once_with(False)
+
+    def test_unhandled_key_retains_native_result(self):
+        self.fsm._offline_original_world_key = Mock(return_value=False)
+        self.assertFalse(self.stage.handle_world_key(True, 20, 0, 0))
+
+    def test_focus_pending_consumes_mouse_and_keys(self):
+        self.stage.focus_restore_pending = True
+        self.fsm._offline_original_world_key = Mock()
+        self.assertTrue(self.stage.handle_world_mouse(0, 20000, 0))
+        self.assertTrue(self.stage.handle_world_key(True, 256, 1, 0))
+        self.fsm._offline_original_world_key.assert_not_called()
+        self.fsm._offline_original_world_mouse.assert_not_called()
+
+    def test_focus_resume_restores_script_input_even_if_mode_is_unchanged(self):
+        self.stage.closed = False
+        self.stage.visible = False
+        self.stage.focus_generation = 3
+        self.stage.cursor_shown = False
+        self.stage.restore_hall_control = Mock()
+        fsm_module = self.stage.finish_focus_restore.__globals__['FsmGame']
+        fsm_module.set_mouse_middle = Mock()
+        self.stage.finish_focus_restore(3)
+        self.stage.restore_hall_control.assert_called_once()
+        fsm_module.set_mouse_middle.assert_called_once()
+        self.bw.sendMouseMovementToScript.assert_called_once_with(True)
+        self.assertFalse(self.stage.focus_restore_pending)
+
+    def test_stale_focus_callback_cannot_reenable_input(self):
+        self.stage.closed = False
+        self.stage.focus_generation = 4
+        self.stage.restore_hall_control = Mock()
+        self.stage.finish_focus_restore(3)
+        self.stage.restore_hall_control.assert_not_called()
+        self.bw.sendMouseMovementToScript.assert_not_called()
 
     def test_short_drag_applies_final_position_even_before_first_callback(self):
         self.key(True)

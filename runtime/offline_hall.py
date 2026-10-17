@@ -38,7 +38,14 @@ class OfflineHall(object):
         self.errors = {}
         self.buttons = []
         self.chat_open = False
-        for name, build in [('navigation', self.navigation), ('activities', self.activities),
+        # The guide is a separately registered native HUD, outside our parts.
+        guide = guiManager.get_ui('freshman_side_bar')
+        if not hasattr(guide, '_offline_original_set_visible'):
+            guide._offline_original_set_visible = guide.set_visible
+        # Native delayed startup and level callbacks can try to show it again.
+        guide.set_visible = lambda value: guide._offline_original_set_visible(False)
+        guide.visible = False
+        for name, build in [('navigation', self.navigation),
                             ('toolbar', self.toolbar), ('chat', self.chat)]:
             try:
                 build()
@@ -69,32 +76,6 @@ class OfflineHall(object):
         top.btn_battle.event_click = self.notice
         top.btn_practice.event_click = top.on_btn_practice_click
         top.btn_observer.event_click = self.notice
-
-    def activities(self):
-        side = self.visible(factory.TrainingMainDlg())
-        side.con_dlg.visible = False
-        side.box_0.visible = False
-        side.con_icon.visible = True
-        side.con_icon.allow_default_ani = False
-        side.con_icon.coord = (7, -46)
-        side.con_icon_acti.visible = True
-        side.con_icon_acti.allow_default_ani = False
-        side.con_icon_acti.coord = (7, 31)
-        side.con_dlg_acti.visible = True
-        side.con_dlg_acti.coord = (-314, 85)
-        side.con_dlg_acti.allow_default_ani = False
-        for name in ['img_news_acti', 'ing_news_teamcup', 'img_new', 'ani_news', 'ani_news_acti', 'btn_teamcup']:
-            getattr(side, name).visible = False
-        for name in ['btn_icon', 'btn_icon_acti', 'sensor_task', 'sensor_acti',
-                     'button_0', 'button_1', 'img_btn_banner']:
-            getattr(side, name).event_click = self.notice
-        side.btn_close_acti.event_click = lambda sender: setattr(side.con_dlg_acti, 'visible', False)
-        side.btn_down.event_click = lambda sender: setattr(side.con_dlg_acti, 'visible', True)
-        side.btn_up.event_click = lambda sender: setattr(side.con_dlg_acti, 'visible', False)
-        side.label_2.text = gb(u'\u67e5\u770b\u6bcf\u65e5\u7684\u91ce\u706b\u8bad\u7ec3\u4efb\u52a1')
-        side.btn_down.coord = (-32, 300)
-        side.btn_up.coord = (-32, 300)
-        side.btn_up.visible = False
 
     def toolbar(self):
         self.visible(factory.MainMenuRightBottomBg())

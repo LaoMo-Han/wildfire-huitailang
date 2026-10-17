@@ -346,7 +346,7 @@ class HeroStage(object):
     def initialize_player(self):
         player = BigWorld.player()
         practice = getattr(self.runtime, 'practice', None)
-        player.move_only = practice is None or not practice.active
+        player.move_only = bool(self.visible or self.hall.chat_open)
         if getattr(player, 'hero_equips', None) is None:
             player.hero_equips = {}
         if getattr(player, 'inv', None) is None:
@@ -528,13 +528,18 @@ class HeroStage(object):
         self.cursor_shown = bool(ui_cursor)
         FsmGame.init().mode = FsmGame.MOD_NOML if modal else (FsmGame.MOD_HERO if in_battle else FsmGame.MOD_CITY)
         FsmGame.set_hero_only_move(ui_cursor)
+        # The mode setter is a no-op when the mode did not change. Focus loss
+        # disables script mouse input, so explicitly restore it on every resume.
+        BigWorld.sendMouseMovementToScript(in_battle and not modal)
         if ui_cursor:
             # Native settings can return to combat mode when closed, leaving
             # the UI cursor at its hidden sentinel even on the hero page.
             import C_ui
             if C_ui.get_cursor_pos() == (-20000, -20000):
                 C_ui.cursor_pos(*BigWorld.getCursorPos())
-        BigWorld.player().move_only = ui_cursor or not in_battle
+        BigWorld.player().move_only = bool(modal)
+        if practice is not None:
+            BigWorld.player().test_do_cd_check = not practice.cooldowns_disabled()
         return in_battle
 
     def restore_hall_control(self):
@@ -594,6 +599,10 @@ class HeroStage(object):
             fsm._offline_original_world_mouse = fsm.handle_mouse_event
         self.world_mouse_handler = self.handle_world_mouse
         fsm.handle_mouse_event = self.world_mouse_handler
+        if not hasattr(fsm, '_offline_original_world_key'):
+            fsm._offline_original_world_key = fsm.handle_key_event
+        self.world_key_handler = self.handle_world_key
+        fsm.handle_key_event = self.world_key_handler
         self.offline_mouse_handler = self.handle_preview_mouse
         manager.handle_mouse_event = self.offline_mouse_handler
 
@@ -625,11 +634,14 @@ class HeroStage(object):
                     BigWorld.callback(0.0, lambda: self.poll_hall_drag(generation))
             else:
                 self.hall_mouse_buttons.discard(key)
+            BigWorld.player().handle_key_event(down, key, mods)
             return True
         from debug import DebugManager
         return DebugManager.instance._offline_original_hall_key(down, key, vk, mods)
 
     def stop_hall_drag(self):
+        for key in self.hall_mouse_buttons:
+            BigWorld.player().handle_key_event(False, key, 0)
         self.hall_mouse_buttons.clear()
         self.hall_drag_moved = False
         self.hall_drag_generation += 1
@@ -655,12 +667,27 @@ class HeroStage(object):
             self.rotate_hall_view(position[0]-previous[0], position[1]-previous[1])
 
     def handle_world_mouse(self, dx, dy, dz):
+        if getattr(self, 'focus_restore_pending', False) or not FsmGame.init().active:
+            return True
         if self.hall_mouse_buttons and self.hall_world_input() and FsmGame.init().active:
             self.update_hall_drag()
             if dz:
                 self.handle_camera_mouse(0, 0, dz)
             return True
         return FsmGame.init()._offline_original_world_mouse(dx, dy, dz)
+
+    def handle_world_key(self, down, key, vk, mods):
+        # The native FSM returns None when the exclusive listener consumes an
+        # event. tw2 treats that as unhandled and lets Windows drag MOD_CITY.
+        if not FsmGame.init().active or getattr(self, 'focus_restore_pending', False):
+            return True
+        self.menu_key_handled = False
+        result = FsmGame.init()._offline_original_world_key(down, key, vk, mods)
+        if self.menu_key_handled:
+            import tw2
+            tw2.enable_drag_area(False)
+            return True
+        return result
 
     def rotate_hall_view(self, dx, dy):
         if not (dx or dy):
@@ -733,10 +760,12 @@ class HeroStage(object):
     def handle_menu_key(self, down, key, vk, mods):
         try:
             result = self.handle_menu_key_impl(down, key, vk, mods)
+            self.menu_key_handled = bool(result)
             if result:
                 self.runtime.write_status()
             return result
         except Exception:
+            self.menu_key_handled = True
             self.runtime.last_error = traceback.format_exc()
             self.log(self.runtime.last_error)
             self.runtime.write_status()
@@ -745,6 +774,7 @@ class HeroStage(object):
     def handle_menu_key_impl(self, down, key, vk, mods):
         # The engine caches tw2's entry point. Use its existing FSM listener
         # for the requested menu/return keys; movement continues through the FSM.
+        world_release = not down and key in getattr(self, 'hall_mouse_buttons', ())
         if not down:
             self.menu_keys_down.discard(key)
             if key in getattr(self, 'hall_mouse_buttons', ()):
@@ -758,13 +788,14 @@ class HeroStage(object):
         practice = getattr(self.runtime, 'practice', None)
         settings_open = bool(getattr(getattr(getattr(self.runtime, 'settings', None), 'ui', None), 'visible', False))
         if key in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE) and self.hall_world_input():
-            # MOD_CITY normally also forwards unhandled pointer events to the
-            # player's skill handlers. Dispatch widgets first, then the world
-            # drag, and keep both press and release out of the combat path.
+            # Widgets get first refusal; only blank space starts combat/drag.
             import C_ui, GUI
-            if not (C_ui.handleKeyEvent(down, key, vk, mods)
-                    or GUI.handleKeyEvent(down, key, mods)):
+            ui_handled = C_ui.handleKeyEvent(down, key, vk, mods) or GUI.handleKeyEvent(down, key, mods)
+            if world_release or not ui_handled:
                 self.handle_hall_mouse_key(down, key, vk, mods)
+            return True
+        if world_release:
+            BigWorld.player().handle_key_event(False, key, mods)
             return True
         if down and key in (keys.KEY_W, keys.KEY_A, keys.KEY_S, keys.KEY_D) and self.hall_world_input():
             self.hall_body_yaw = None
@@ -842,15 +873,37 @@ class HeroStage(object):
 
     def handle_app_active(self, active):
         if not active:
+            # Save before the native focus callback changes cursor/capture.
+            self.capture_hall_camera()
             self.stop_hall_drag()
             self.preview_drag = False
             BigWorld.sendMouseMovementToScript(False)
-            self.capture_hall_camera()
+            self.focus_generation = getattr(self, 'focus_generation', 0)+1
+            self.focus_restore_pending = True
         self.previous_active_handler(active)
         if not active:
             self.menu_keys_down.clear()
-        if active and not self.visible and not self.closed:
+            practice = getattr(self.runtime, 'practice', None)
+            if practice is not None:
+                practice.keys_down.clear()
+        if active and not self.closed:
+            generation = getattr(self, 'focus_generation', 0)
+            self.focus_restore_pending = True
+            self.sync_input_mode()
+            # Fullscreen focus/cursor warps complete after the active callback.
+            BigWorld.callback(0.1, lambda: self.finish_focus_restore(generation))
+
+    def finish_focus_restore(self, generation):
+        if self.closed or generation != getattr(self, 'focus_generation', 0) or not FsmGame.init().active:
+            return
+        if self.visible:
+            self.sync_input_mode()
+        else:
             self.restore_hall_control()
+        if not self.cursor_shown:
+            FsmGame.set_mouse_middle()
+            BigWorld.sendMouseMovementToScript(True)
+        self.focus_restore_pending = False
 
     def select(self, hero_type):
         if hero_type not in self.runtime.hero_ids:
@@ -1106,6 +1159,8 @@ class HeroStage(object):
             manager.handle_key_event = manager._offline_original_hall_key
         if FsmGame.init().handle_mouse_event == self.world_mouse_handler:
             FsmGame.init().handle_mouse_event = FsmGame.init()._offline_original_world_mouse
+        if FsmGame.init().handle_key_event == self.world_key_handler:
+            FsmGame.init().handle_key_event = FsmGame.init()._offline_original_world_key
         if self.visible:
             self.hide()
         self.closed = True

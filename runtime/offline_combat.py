@@ -15,7 +15,7 @@ class LocalCombat(object):
         self.install()
 
     def enabled(self):
-        return self.practice.active and FsmGame.state_is_offline()
+        return not getattr(self.practice, 'loading', False) and FsmGame.state_is_offline()
 
     def install(self):
         from avolume.iAtkVolume import iAtkVolume

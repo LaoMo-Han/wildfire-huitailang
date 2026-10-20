@@ -27,6 +27,35 @@ def source_clone_offset(yaw, index, ring_size=8, radius=1.15, spacing=0.65):
 
 
 class LocalActorField(ActorField.ActorField):
+    def _init_check(self):
+        ActorField.ActorField._init_check(self)
+        for actor_id in self.actors:
+            self.disable_actor_collision(actor_id)
+
+    def disable_actor_collision(self, actor_id, attempt=0):
+        # Preview actors share Havok collision layers with gameplay actors,
+        # even while hidden in their separate BigWorld preview space.
+        if actor_id not in self.actors:
+            return
+        actor = BigWorld.entity(actor_id)
+        if actor is None:
+            return
+        model = getattr(actor, 'model', None)
+        if model is None or not model.bh.isBehaviorReady():
+            if attempt < 100:
+                BigWorld.callback(0.1, lambda: self.disable_actor_collision(actor_id, attempt+1))
+            return
+        import Havok
+        # FashionActor has no camp, so enable_char_collid(False) cannot be
+        # used here. Apply the native nonblocking layer to its phantom.
+        model.bh.setCollisionFilterInfo(Havok.calcFilterInfo(
+            const.LAYER_DONT_COLLIDE_EXCEPT_HIT_TEST, 0, 0, 0))
+        model.bh.updateCollisionFilterOnPhantom()
+
+    def on_fashion_changed(self, actor_id):
+        ActorField.ActorField.on_fashion_changed(self, actor_id)
+        self.disable_actor_collision(actor_id)
+
     def enter(self, hero_type, show_eff=False, enter_load_fashions=False, show_default_eff=False):
         if self.isin:
             self.set_hero(hero_type)
@@ -67,6 +96,7 @@ class LocalActorField(ActorField.ActorField):
             ActorField.CueEffMgr.stop_sounds_by_ent_id(actor_id)
             actor = BigWorld.entity(actor_id)
             if actor is not None and getattr(actor, 'model', None) is not None:
+                self.disable_actor_collision(actor_id)
                 actor.model.visible = False
         if self._change_bh_pos:
             BigWorld.cancelCallback(self._change_bh_pos)

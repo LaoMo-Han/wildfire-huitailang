@@ -295,7 +295,7 @@ class HeroStage(object):
         self.hall, self.runtime, self.log = hall, runtime, log
         self.visible = False
         self.closed = False
-        self.hero_type = int(BigWorld.player().hero_type)
+        self.hero_type = runtime.skillsets.visual_hero()
         self.tab = 'equip'
         self.hall_combat = False
         self.hall_ui_hidden = False
@@ -337,6 +337,7 @@ class HeroStage(object):
         self.selector.visible = False
         self.selector.part_basic.hero_list.lock_mode = False
         self.info = LocalInfoPart(self)
+        runtime.equipment.bind_stage(self)
         self.info.hero_infos = dict((h, (1, 0)) for h in runtime.hero_ids)
         self.info.visible = False
         self.parts['equip'] = self.info
@@ -369,6 +370,7 @@ class HeroStage(object):
 
     def initialize_player(self):
         player = BigWorld.player()
+        self.runtime.equipment.initialize()
         practice = getattr(self.runtime, 'practice', None)
         player.move_only = bool(self.visible or self.hall.chat_open)
         if getattr(player, 'hero_equips', None) is None:
@@ -554,6 +556,7 @@ class HeroStage(object):
         fighting = in_battle or hall_combat
         modal = self.visible or self.hall.chat_open or bool(self.runtime.bag is not None and self.runtime.bag.visible)
         modal = modal or bool(settings is not None and settings.ui.visible)
+        modal = modal or bool(getattr(getattr(self.runtime, 'skillsets', None), 'selector_visible', False))
         modal = modal or bool(practice is not None and practice.entry is not None and practice.entry.visible)
         if in_battle:
             modal = modal or practice.toolbar.hero_list.visible or any(
@@ -669,6 +672,7 @@ class HeroStage(object):
             and not (practice is not None and practice.engaged)
             and not (self.runtime.bag is not None and self.runtime.bag.visible)
             and not getattr(getattr(getattr(self.runtime, 'settings', None), 'ui', None), 'visible', False)
+            and not getattr(getattr(self.runtime, 'skillsets', None), 'selector_visible', False)
             and not SysBox.instance().show_array)
 
     def handle_hall_mouse_key(self, down, key, vk, mods):
@@ -902,6 +906,19 @@ class HeroStage(object):
                     self.hall.close_chat()
                 return True
             return False
+        skillsets = getattr(self.runtime, 'skillsets', None)
+        if skillsets is not None and key == getattr(keys, 'KEY_F8', None) and not mods:
+            if down and key not in self.menu_keys_down:
+                self.menu_keys_down.add(key)
+                skillsets.toggle_selector()
+            return True
+        if skillsets is not None and skillsets.selector_visible:
+            if key == keys.KEY_ESCAPE:
+                if down:
+                    skillsets.close_selector()
+                return True
+            # Let the native selector consume clicks; suppress world hotkeys.
+            return key not in (keys.KEY_LEFTMOUSE, keys.KEY_RIGHTMOUSE)
         if key == keys.KEY_RETURN and not self.visible and not mods:
             if down and key not in self.menu_keys_down:
                 self.menu_keys_down.add(key)
@@ -1248,25 +1265,16 @@ class HeroStage(object):
         practice = getattr(self.runtime, 'practice', None)
         if practice is not None and (practice.active or practice.loading):
             return []
-        combat = bool(getattr(self, 'hall_combat', False))
-        if combat:
-            lines = [u'\u5927\u5385\u00b7\u6218\u6597\u72b6\u6001\uff08Tab/Esc \u8fd4\u56de\u975e\u6218\u6597\uff09',
-                     u'\u5de6\u952e\u7a7a\u767d\u5904\u666e\u653b\uff0cQ/E/R/F/C \u91ca\u653e\u6280\u80fd',
-                     u'WASD \u79fb\u52a8\uff0c\u9f20\u6807\u79fb\u52a8\u8f6c\u52a8\u89c6\u89d2',
-                     u'\u51c6\u5fc3\u3001\u5149\u6807\u4e0e\u8f93\u5165\u65b9\u5f0f\u4e0e\u7ec3\u4e60\u573a\u4e00\u81f4']
-        else:
-            lines = [u'\u5927\u5385\u00b7\u975e\u6218\u6597\u72b6\u6001\uff08Tab \u8fdb\u5165\u6218\u6597\uff09',
-                     u'WASD \u79fb\u52a8\uff0c\u6eda\u8f6e\u62c9\u8fd1\u62c9\u8fdc',
-                     u'\u5de6\u952e\u62d6\u52a8\u89c6\u89d2\uff0c\u53f3\u952e\u62d6\u52a8\u540c\u65f6\u8f6c\u5411',
-                     u'\u754c\u9762\u6309\u94ae\u4f18\u5148\uff0c\u6b64\u65f6\u4e0d\u4f1a\u91ca\u653e\u6280\u80fd']
-        lines.append(u'\u56de\u8f66 \u804a\u5929\uff0cZ \u82f1\u96c4\uff0cX \u65f6\u88c5\uff0cC \u8bed\u97f3\uff0cV \u6545\u4e8b')
-        lines.append(u'B \u80cc\u5305\uff0cH \u9690\u85cf/\u663e\u793a\u5168\u90e8 UI\uff0cEsc \u9000\u51fa\u786e\u8ba4')
-        lines.append(u'\u82f1\u96c4/\u65f6\u88c5\u9875\u70b9\u201c\u6e90\u529b\u5851\u5f62\u201d\u5728\u811a\u4e0b\u751f\u6210\u590d\u5236\u4f53')
         if self.hall.chat_open:
-            lines.append(u'\u804a\u5929\u8f93\u5165\u4e2d\uff1a\u56de\u8f66\u6216 Esc \u6536\u8d77\uff08\u79bb\u7ebf\u4e0d\u53d1\u9001\uff09')
-        else:
-            lines.append(u'\u6e90\u529b\u590d\u5236\u4f53 %d/%d\uff0c\u53ef\u53cd\u590d\u751f\u6210\uff0c\u4e92\u4e0d\u5f71\u54cd' % (
-                len(self.source_clones), self.CLONE_LIMIT))
+            return [u'\u804a\u5929\u8f93\u5165\uff1a\u56de\u8f66 / Esc \u6536\u8d77']
+        state = u'\u6218\u6597' if getattr(self, 'hall_combat', False) else u'\u975e\u6218\u6597'
+        lines = [u'\u5927\u5385 %s | Tab \u5207\u6362\u6218\u6597 | F8 \u6362\u6280\u80fd\u7ec4' % state,
+                 u'WASD \u79fb\u52a8 | \u9f20\u6807\u8f6c\u5411 | \u56de\u8f66\u804a\u5929',
+                 u'Z \u82f1\u96c4 / \u88c5\u5907 | X \u65f6\u88c5 | B \u80cc\u5305 | H \u663e\u9690UI',
+                 u'C \u8bed\u97f3 | V \u6545\u4e8b | Esc \u8fd4\u56de | \u6e90\u529b\u5851\u5f62 %d/%d' % (
+                     len(self.source_clones), self.CLONE_LIMIT)]
+        if getattr(self, 'hall_combat', False):
+            lines[1] = u'\u5de6\u952e\u666e\u653b | Q/E/R/F/C \u6280\u80fd | WASD \u79fb\u52a8'
         return lines
 
     def exit_clicked(self, sender):
@@ -1278,6 +1286,7 @@ class HeroStage(object):
     def ensure_equipment(self):
         if not hasattr(self, 'all_bags'):
             self.all_bags = BasicPhase.HeroAllEquipBag()
+            self.runtime.equipment.bind_bag(self, self.all_bags)
         return self.all_bags
 
     def open_skills(self):
@@ -1343,6 +1352,8 @@ class HeroStage(object):
         result['loading'] = bool(guiManager.in_loading())
         player = BigWorld.player()
         result['player_class'] = player.__class__.__name__
+        result['equipment'] = self.runtime.equipment.status()
+        result['skillsets'] = self.runtime.skillsets.status()
         result['player_position'] = list(player.position)
         result['hall_fashions'] = list(getattr(player, 'root_fashions', []) or [])
         result['player_input_enabled'] = bool(getattr(player, 'input_enabled', False))

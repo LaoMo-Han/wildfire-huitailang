@@ -57,6 +57,8 @@ class LocalPractice(object):
         self.evolutions = {}
         self.purchase_history = []
         self.equipment_category = None
+        self.buff_purchases = {}
+        self.buff_states = {}
         self.ai = False
         self.keys_down = set()
         self.errors = {}
@@ -83,6 +85,9 @@ class LocalPractice(object):
         self.install_equipment_hooks()
         self.install_difficulty_buttons()
         self.install_toolbar_buttons()
+        context = {}
+        execfile('../res/editor/client/offline_buffs.py', context)
+        context['install'](self)
         self.disable_debug_map_keys()
         self.enable_cooldowns()
         BigWorld.callback(0.25, self.tick)
@@ -295,10 +300,11 @@ class LocalPractice(object):
         self.runtime.write_status()
 
     def select_hero(self, hero_type):
-        if not self.active or int(hero_type) not in self.runtime.hero_ids:
+        if not self.active or self.runtime.skillsets.busy or int(hero_type) not in self.runtime.hero_ids:
             return
         def select():
             if self.helper.is_selecting_attacker:
+                self.clear_buffs()
                 self.runtime.apply_hero(int(hero_type))
                 self.toolbar.set_selection(2)
             else:
@@ -323,6 +329,7 @@ class LocalPractice(object):
         self.guard('reset', lambda: self._reset(clear_evo_and_lv))
 
     def _reset(self, clear_evo_and_lv):
+        self.clear_buffs()
         self.combat.clear()
         self.helper.clear_all()
         self.helper.force_update_mana()
@@ -408,7 +415,7 @@ class LocalPractice(object):
                                      else u'\u65e0CD\uff1a\u5173 F7').encode('gbk')
 
     def toolbar_action(self, action):
-        if not self.active or self.loading:
+        if not self.active or self.loading or self.runtime.skillsets.busy:
             return
         def run():
             self.equipment_category = None
@@ -457,7 +464,7 @@ class LocalPractice(object):
                 rc.COMMON_BTN_RECT_BIG, u'\u9009\u62e9\u5730\u56fe'.encode('gbk'))
         self.map_button.event_click = lambda sender: self.toggle_maps()
         if not hasattr(self, 'cooldown_button'):
-            # Placed directly right of "选择地图", still on the native top bar.
+            # Placed directly right of "\u9009\u62e9\u5730\u56fe", still on the native top bar.
             x, y = cooldown_button_position(self.map_button)
             self.cooldown_button = xnui.XButton(self.toolbar, x, y, rc.COMMON_BTN_RECT_BIG, '')
         else:
@@ -470,6 +477,14 @@ class LocalPractice(object):
             self._toolbar_shifted = True
         self.cooldown_button.event_click = lambda sender: self.toolbar_action('no_cooldown')
         self.update_cooldown_button()
+        if not hasattr(self, 'skillset_button'):
+            self.skillset_button = xnui.XButton(self.toolbar, self.map_button.coord[0],
+                self.map_button.coord[1]+self.map_button.height+4, rc.COMMON_BTN_RECT_BIG,
+                u'\u6362\u6280\u80fd\u7ec4 F8'.encode('gbk'))
+        self.skillset_button.event_click = lambda sender: self.toggle_skillsets()
+
+    def toggle_skillsets(self):
+        self.runtime.skillsets.toggle_selector()
 
     def toggle_maps(self):
         if not self.active or self.loading:
@@ -578,6 +593,7 @@ class LocalPractice(object):
             return
         if scene == DebugManager.instance.cSpaceName:
             return
+        self.clear_buffs()
         if hasattr(self, 'map_dialog'):
             self.map_dialog.visible = False
             guiManager.use_mouse(self.map_dialog, False)
@@ -912,9 +928,108 @@ class LocalPractice(object):
             for key, value in equip_evolution_data.data[evo_id].get('attribs', {}).items():
                 if isinstance(value, (int, float)):
                     values[key] = values.get(key, 0)+value
+        # Native offline states already contribute combat properties through
+        # stateKeys. Adding them to equipment would apply the bonus twice.
         player.equs = values
         player.set_equs(old)
         player.board.initProps(player)
+
+    def purchase_buff(self, item_id):
+        from common_data import combat_state_data
+        from system import MsgManager
+        if not self.active or self.loading or self.runtime.skillsets.busy:
+            return False
+        item_id = int(item_id)
+        info = self.monster_buffs.get(item_id)
+        if info is None:
+            raise ValueError('Only native monster buffs can be purchased here')
+        now = BigWorld.time()
+        ready = self.buff_purchases.get(item_id, 0)
+        if now < ready:
+            MsgManager.show(text=(u'Buff \u5269\u4f59 %d \u79d2' % int(ready-now+1)).encode('gbk'))
+            return False
+        player = BigWorld.player()
+        cost = int(info.get('use_cash', 0))
+        if cost < 0 or cost > player.cash:
+            MsgManager.show(text=u'\u91d1\u5e01\u4e0d\u8db3'.encode('gbk'))
+            return False
+        state_ids, level = info['state']
+        durations = info.get('duration', ())
+        if not durations or any((no, level) not in combat_state_data.data for no in state_ids):
+            raise ValueError('Buff state data is missing')
+        # Validate every state before applying or charging for the purchase.
+        records = []
+        for index, no in enumerate(state_ids):
+            duration = float(durations[min(index, len(durations)-1)])
+            if duration <= 0:
+                raise ValueError('Buff duration is invalid')
+            config = combat_state_data.data[(no, level)]
+            records.append((no, {'level':level, 'item_id':item_id, 'expires':now+duration,
+                'next_tick':now+float(config.get('interval', 1.0)),
+                'interval':max(0.1, float(config.get('interval', 1.0)))}))
+        old_states = dict(self.buff_states)
+        try:
+            for no, record in records:
+                player.offline_remove_state(no, level)
+                self.apply_native_buff(no, level, record['expires']-now)
+                self.buff_states[no] = record
+            self.update_equipment_stats()
+        except Exception:
+            for no, record in records:
+                player.offline_remove_state(no, record['level'])
+            self.buff_states = old_states
+            for no, record in old_states.items():
+                remaining = max(0, record['expires']-now)
+                self.apply_native_buff(no, record['level'], remaining)
+            self.update_equipment_stats()
+            raise
+        self.set_cash(player.cash-cost)
+        self.buff_purchases[item_id] = now+float(info.get('cooldown', 0))
+        MsgManager.show(text=u'Buff \u5df2\u8d2d\u4e70\u5e76\u751f\u6548'.encode('gbk'))
+        self.runtime.write_status()
+        return True
+
+    def apply_native_buff(self, no, level, duration):
+        player = BigWorld.player()
+        player.offline_add_state((no, level), duration)
+        # Own the expiry so clearing/resetting and repurchasing cannot leave
+        # an earlier native callback that removes the new buff prematurely.
+        callback = getattr(player, 'cb_remove_combat_state', None)
+        if callback is not None:
+            BigWorld.cancelCallback(callback)
+            player.cb_remove_combat_state = None
+
+    def tick_buffs(self):
+        from common_data import combat_state_data
+        now = BigWorld.time()
+        player = BigWorld.player()
+        changed = False
+        for no, buff in list(self.buff_states.items()):
+            if now >= buff['expires']:
+                player.offline_remove_state(no, buff['level'])
+                del self.buff_states[no]
+                changed = True
+                continue
+            if now >= buff['next_tick']:
+                config = combat_state_data.data[(no, buff['level'])]
+                if 'recoverHp' in config.get('triggers', {}).get('interval_effect', ()):
+                    player.hp = min(player.mhp, player.hp+config.get('set_hp_num', 0))
+                    player.set_hp(0)
+                buff['next_tick'] = now+buff['interval']
+        if changed:
+            self.update_equipment_stats()
+            player.hp = min(player.hp, player.mhp)
+            player.set_hp(0)
+            self.runtime.write_status()
+
+    def clear_buffs(self):
+        states = getattr(self, 'buff_states', {})
+        for no in list(states):
+            BigWorld.player().offline_remove_state(no, states[no]['level'])
+        self.buff_states = {}
+        self.buff_purchases = {}
+        if states:
+            self.update_equipment_stats()
 
     def leave(self):
         if not self.active or self.loading:
@@ -922,6 +1037,7 @@ class LocalPractice(object):
         self.guard('leave', self._leave)
 
     def _leave(self):
+        self.clear_buffs()
         self.combat.clear()
         from debug import DebugManager
         self.loading = True
@@ -969,6 +1085,7 @@ class LocalPractice(object):
         player.equs = getattr(self, 'return_equs', getattr(self, 'base_equipment_stats', old))
         player.set_equs(old)
         player.board.initProps(player)
+        self.runtime.equipment.apply()
         self.set_map_enabled(False)
         self.runtime.hall.hero_page.hall_pitch, self.runtime.hall.hero_page.hall_yaw = self.return_camera
         self.runtime.hall.hero_page.restore_hall_control()
@@ -1013,6 +1130,8 @@ class LocalPractice(object):
             return True
         if not self.active or self.loading:
             return False
+        if self.runtime.skillsets.busy:
+            return True
         actions = {keys.KEY_F1:lambda: self.toolbar_action(0),
                    keys.KEY_F2:lambda: self.toolbar_action(1),
                    keys.KEY_F3:lambda: self.toolbar_action(2),
@@ -1020,6 +1139,7 @@ class LocalPractice(object):
                    keys.KEY_F5:lambda: self.toolbar_action(4),
                    keys.KEY_F6:lambda: self.toolbar_action('combo'),
                    keys.KEY_F7:lambda: self.toolbar_action('no_cooldown'),
+                   keys.KEY_F8:self.toggle_skillsets,
                    keys.KEY_B:lambda: self.reset(bool(mods & keys.MODIFIER_SHIFT)),
                    keys.KEY_Y:self.toggle_ai,
                    keys.KEY_P:self.toggle_attributes,
@@ -1049,6 +1169,7 @@ class LocalPractice(object):
             self.guard('combat', self.combat.tick)
         if self.active and not self.loading:
             def update():
+                self.tick_buffs()
                 player = BigWorld.player()
                 safe = getattr(self, 'last_safe_position', None)
                 if safe is not None and player.position[1] < safe[1]-60.0:
@@ -1181,6 +1302,10 @@ class LocalPractice(object):
             self.cooldown_probe()
         elif action == 'buy':
             self.purchase_equipment(int(command['evo_id']))
+        elif action == 'buy_buff':
+            self.purchase_buff(int(command['item_id']))
+        elif action == 'skillset':
+            self.runtime.skillsets.select(int(command['hero_type']))
         elif action == 'undo':
             self.undo_purchase()
         elif action == 'map':
@@ -1215,6 +1340,8 @@ class LocalPractice(object):
     def status(self):
         target = self.get_target()
         return {'active':self.active, 'loading':self.loading,
+                'skillsets':self.runtime.skillsets.status(),
+                'buffs':dict((str(k),dict(v)) for k,v in self.buff_states.items()),
                 'no_cooldown':getattr(self, 'no_cooldown', False),
                 'entry_visible':bool(self.entry is not None and self.entry.visible),
                 'scene':ClientUtils.get_scene_name(), 'target_id':self.target_id,

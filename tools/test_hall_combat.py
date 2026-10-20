@@ -83,7 +83,9 @@ class HintTests(unittest.TestCase):
             self.assertIn(key, text)
 
     def test_hidden_ui_key_is_documented_as_h(self):
-        self.assertIn(u'H \u9690\u85cf/\u663e\u793a\u5168\u90e8 UI', self.stage.hint_lines()[5])
+        self.assertIn(u'H', self.stage.hint_lines()[2])
+        self.assertEqual(len(self.stage.hint_lines()), 4)
+        self.assertIn('F8', self.stage.hint_lines()[0])
 
     def test_combat_hints_switch_to_skill_help(self):
         self.stage.hall_combat = True

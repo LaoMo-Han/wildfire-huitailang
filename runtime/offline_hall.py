@@ -34,7 +34,7 @@ class OfflineHall(object):
     # The native city chat lives at the bottom-left corner. Local operation
     # hints occupy the rows directly above its input box, so they read as part
     # of the chat window instead of covering the 3D view.
-    HINT_ROWS = 9
+    HINT_ROWS = 4
     HINT_X = 96
     # The opened chat log covers the left half, so hints move right of it.
     HINT_X_CHAT = 540
@@ -109,7 +109,7 @@ class OfflineHall(object):
 
     def update_hero(self):
         if hasattr(self, 'bottom'):
-            hero = int(BigWorld.player().hero_type)
+            hero = self.heroes.skillsets.visual_hero()
             name = 'ICON_ROLE_4_HERO_%04d' % hero
             if hasattr(rc, name) and ResMgr.fileExist(getattr(rc, name)):
                 self.bottom.avatar_btn.image = getattr(rc, name)

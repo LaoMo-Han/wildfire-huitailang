@@ -41,11 +41,19 @@ class LocalRuntime(object):
         except Exception:
             self.profile = {'hero_type':int(BigWorld.player().hero_type), 'fashion':{}, 'paint':{}, 'voice':{}, 'loadouts':[]}
         context = {}
+        execfile('../res/editor/client/offline_equipment.py', context)
+        self.equipment = context['Equipment'](self)
+        self.equipment.initialize()
+        context = {}
+        execfile('../res/editor/client/offline_skillsets.py', context)
+        self.skillsets = context['Skillsets'](self)
+        context = {}
         execfile('../res/editor/client/offline_hall.py', context)
         self.hall = context['install'](self, log)
         context = {}
         execfile('../res/editor/client/offline_practice.py', context)
         self.practice = context['install'](self)
+        BigWorld.callback(0.5, self.skillsets.apply_saved)
         context = {}
         execfile('../res/editor/client/offline_compat.py', context)
         self.compatibility = context['install'](self)
@@ -131,16 +139,20 @@ class LocalRuntime(object):
         hero_type = int(hero_type)
         if hero_type not in self.hero_ids:
             raise ValueError('Hero is not present in this client')
+        self.skillsets.serial += 1
+        self.skillsets.busy = False
         if self.practice is not None and hasattr(self.practice, 'combat'):
             self.practice.combat.clear()
         manager = PracticeRoomHelper.instance()
         manager.putting_ally = False
         manager.change_attacker(hero_type)
+        BigWorld.player()._offline_visual_hero = hero_type
         from debug import EditorConf
         EditorConf.set('offline_hero_type', hero_type)
         self.profile['hero_type'] = hero_type
         self.save()
         self.hall.update_hero()
+        self.skillsets.apply_saved()
         BigWorld.callback(0.5, lambda: self.apply_saved_appearance(True))
 
     def fashions_for(self, hero_type):
@@ -155,7 +167,7 @@ class LocalRuntime(object):
         if player is None or getattr(player, 'model', None) is None:
             BigWorld.callback(0.5, lambda: self.apply_saved_appearance(force))
             return
-        hero_type = int(player.hero_type)
+        hero_type = self.skillsets.visual_hero()
         if getattr(player, 'model_id', None) != hero_type:
             BigWorld.callback(0.5, lambda: self.apply_saved_appearance(force))
             return
